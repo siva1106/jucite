@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Jucite Connector",
+  "version": "1.0",
+  "description": "Save academic papers directly to your local Jucite database.",
+  "permissions": [
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://localhost:8080/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
