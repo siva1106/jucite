@@ -3,103 +3,196 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jucite Desktop Dashboard</title>
-  <!-- Load Tailwind CSS for a beautiful, modern UI -->
+  <title>Jucite Desktop</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Using FontAwesome for Zotero-like icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    /* Prevent text selection to feel like a native desktop app */
+    body { user-select: none; overflow: hidden; }
+    .pane-scroll { overflow-y: auto; height: calc(100vh - 80px); }
+    .selected-row { background-color: #3b82f6 !important; color: white !important; }
+    .selected-row td { border-color: #3b82f6 !important; }
+  </style>
 </head>
-<body class="bg-slate-50 text-slate-800 min-h-screen">
+<body class="bg-gray-200 text-sm font-sans h-screen flex flex-col">
 
-  <div class="max-w-6xl mx-auto py-10 px-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between mb-8">
-      <div>
-        <h1 class="text-3xl font-extrabold text-indigo-700 tracking-tight">📚 Jucite Library</h1>
-        <p class="text-sm text-slate-500 mt-1">Your local-first, private academic repository</p>
-      </div>
-      <div class="text-xs bg-indigo-100 text-indigo-800 font-bold px-3 py-1.5 rounded-full">
-        Linux Desktop Mode
-      </div>
+  <!-- TOP MENU BAR (Like native Windows/Linux apps) -->
+  <div class="bg-white border-b border-gray-300 flex items-center px-2 py-1 text-xs">
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">File</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Edit</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">View</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Tools</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Help</div>
+  </div>
+
+  <!-- TOOLBAR -->
+  <div class="bg-gray-100 border-b border-gray-300 flex items-center p-2 gap-4">
+    <div class="flex gap-2 text-gray-600">
+      <button class="hover:bg-gray-200 p-1 rounded" title="New Collection"><i class="fa-solid fa-folder-plus text-green-600"></i></button>
+      <button class="hover:bg-gray-200 p-1 rounded" title="Add Item by DOI"><i class="fa-solid fa-wand-magic-sparkles text-purple-500"></i></button>
     </div>
+    
+    <div class="flex-grow"></div> <!-- Spacer -->
 
     <!-- Search Bar -->
-    <div class="mb-6">
-      <input type="text" id="search" placeholder="Search by title, journal, or year..." 
-             class="w-full px-4 py-3 rounded-lg border border-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+    <div class="relative">
+      <i class="fa-solid fa-search absolute left-2 top-1.5 text-gray-400"></i>
+      <input type="text" id="search" placeholder="All Fields & Tags" 
+             class="pl-7 pr-2 py-1 rounded border border-gray-300 text-xs w-64 focus:outline-none focus:border-blue-500">
+    </div>
+  </div>
+
+  <!-- 3-PANE LAYOUT -->
+  <div class="flex flex-1 overflow-hidden">
+    
+    <!-- LEFT PANE: Collections -->
+    <div class="w-64 bg-gray-50 border-r border-gray-300 flex flex-col">
+      <div class="pane-scroll p-2">
+        <div class="flex items-center gap-2 px-2 py-1 bg-blue-100 rounded text-gray-800 font-semibold cursor-pointer">
+          <i class="fa-solid fa-book text-blue-500"></i> My Library
+        </div>
+        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6 mt-1">
+          <i class="fa-solid fa-clock text-gray-400"></i> Recently Read
+        </div>
+        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6">
+          <i class="fa-solid fa-file-lines text-green-500"></i> My Publications
+        </div>
+        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6">
+          <i class="fa-solid fa-trash text-red-400"></i> Trash
+        </div>
+      </div>
     </div>
 
-    <!-- Library Table -->
-    <div class="bg-white rounded-xl shadow-md border border-slate-100 overflow-hidden">
-      <table class="w-full text-left border-collapse">
-        <thead>
-          <tr class="bg-indigo-50 text-indigo-700 text-xs font-bold uppercase tracking-wider border-b border-indigo-100">
-            <th class="p-4 w-12">ID</th>
-            <th class="p-4">Title</th>
-            <th class="p-4 w-24">Year</th>
-            <th class="p-4 w-32 text-center">PDF</th>
-          </tr>
-        </thead>
-        <tbody id="library-body" class="divide-y divide-slate-100">
-          <!-- Papers will be loaded here dynamically -->
-        </tbody>
-      </table>
+    <!-- MIDDLE PANE: Paper List -->
+    <div class="flex-1 bg-white border-r border-gray-300 flex flex-col">
+      <div class="pane-scroll">
+        <table class="w-full text-left border-collapse cursor-default">
+          <thead class="bg-gray-100 border-b border-gray-300 sticky top-0">
+            <tr class="text-gray-600">
+              <th class="p-1 pl-2 border-r border-gray-300 font-normal w-6"></th>
+              <th class="p-1 pl-2 border-r border-gray-300 font-normal">Title</th>
+              <th class="p-1 pl-2 border-r border-gray-300 font-normal w-48">Creator</th>
+              <th class="p-1 pl-2 font-normal w-16">Year</th>
+            </tr>
+          </thead>
+          <tbody id="library-body" class="text-gray-800">
+            <!-- Papers load here -->
+          </tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- RIGHT PANE: Metadata -->
+    <div class="w-72 bg-gray-50 flex flex-col">
+      <div id="metadata-pane" class="pane-scroll p-4 hidden">
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Item Type: <span class="text-gray-800 font-normal capitalize">Journal Article</span></div>
+        <h2 id="meta-title" class="text-lg font-bold text-gray-900 leading-tight mb-4 select-text"></h2>
+        
+        <div class="grid grid-cols-3 gap-y-2 text-xs mb-4 select-text">
+          <div class="text-gray-500 text-right pr-2">Authors:</div>
+          <div id="meta-authors" class="col-span-2 text-gray-900 font-semibold"></div>
+          
+          <div class="text-gray-500 text-right pr-2">Journal:</div>
+          <div id="meta-journal" class="col-span-2 text-gray-900"></div>
+          
+          <div class="text-gray-500 text-right pr-2">Year:</div>
+          <div id="meta-year" class="col-span-2 text-gray-900"></div>
+        </div>
+
+        <hr class="border-gray-300 my-4">
+
+        <button id="open-pdf-btn" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold py-1.5 px-4 rounded shadow-sm flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-file-pdf text-red-500"></i> Open PDF
+        </button>
+      </div>
+      
+      <div id="empty-metadata" class="h-full flex items-center justify-center text-gray-400 p-4 text-center">
+        Select an item to view its details
+      </div>
+    </div>
+
   </div>
 
   <script>
     const libraryBody = document.getElementById('library-body');
     const searchInput = document.getElementById('search');
-    let allPapers = [];
+    
+    // Metadata Panel elements
+    const metadataPane = document.getElementById('metadata-pane');
+    const emptyMetadata = document.getElementById('empty-metadata');
+    const metaTitle = document.getElementById('meta-title');
+    const metaAuthors = document.getElementById('meta-authors');
+    const metaJournal = document.getElementById('meta-journal');
+    const metaYear = document.getElementById('meta-year');
+    const openPdfBtn = document.getElementById('open-pdf-btn');
 
-    // 1. Fetch papers from the Julia local API
+    let allPapers = [];
+    let selectedPaperId = null;
+
     function loadLibrary() {
       fetch('/api/library')
         .then(res => res.json())
         .then(data => {
           allPapers = data;
           renderPapers(allPapers);
-        })
-        .catch(err => {
-          libraryBody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-red-500 font-semibold">Error connecting to Jucite backend. Is the server running?</td></tr>`;
         });
     }
 
-    // 2. Render papers into HTML rows
     function renderPapers(papers) {
-      if (papers.length === 0) {
-        libraryBody.innerHTML = `<tr><td colspan="4" class="p-8 text-center text-slate-400">Your library is empty. Save a paper using your browser extension!</td></tr>`;
-        return;
-      }
+      libraryBody.innerHTML = papers.map(paper => {
+        // Just grab the first author's family name for the table view
+        let creator = "Unknown";
+        if (paper.authors && paper.authors.length > 0) {
+          creator = paper.authors[0].family;
+          if (paper.authors.length > 1) creator += " et al.";
+        }
 
-      libraryBody.innerHTML = papers.map(paper => `
-        <tr class="hover:bg-slate-50 transition">
-          <td class="p-4 text-sm font-semibold text-slate-400">${paper.id}</td>
-          <td class="p-4">
-            <div class="font-bold text-slate-800 text-sm leading-snug">${paper.title}</div>
-            <div class="text-xs text-slate-400 mt-0.5">${paper.journal}</div>
+        return `
+        <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" class="border-b border-gray-200 hover:bg-blue-50 transition cursor-pointer">
+          <td class="p-1 pl-2 text-center text-gray-400">
+            <i class="fa-solid fa-file-lines"></i>
           </td>
-          <td class="p-4 text-sm font-medium text-slate-600">${paper.year}</td>
-          <td class="p-4 text-center">
-            ${paper.pdf_path ? `
-              <button onclick="openPDF(${paper.id})" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                📄 Open PDF
-              </button>
-            ` : `
-              <span class="text-xs text-slate-400 font-semibold">No File</span>
-            `}
-          </td>
+          <td class="p-1 pl-2 truncate max-w-[200px]">${paper.title}</td>
+          <td class="p-1 pl-2 truncate">${creator}</td>
+          <td class="p-1 pl-2">${paper.year}</td>
         </tr>
-      `).join('');
+      `}).join('');
     }
 
-    // 3. Trigger Julia to open the PDF in the native Linux viewer
+    function selectPaper(id) {
+      // Remove selection styling from all rows
+      document.querySelectorAll('tr').forEach(row => row.classList.remove('selected-row'));
+      // Add selection styling to clicked row
+      document.getElementById(`row-${id}`).classList.add('selected-row');
+      
+      const paper = allPapers.find(p => p.id === id);
+      selectedPaperId = paper.id;
+
+      // Update right metadata panel
+      emptyMetadata.classList.add('hidden');
+      metadataPane.classList.remove('hidden');
+
+      metaTitle.textContent = paper.title;
+      metaJournal.textContent = paper.journal;
+      metaYear.textContent = paper.year;
+      
+      metaAuthors.innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
+
+      openPdfBtn.onclick = () => openPDF(paper.id);
+      if(!paper.pdf_path) {
+        openPdfBtn.disabled = true;
+        openPdfBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      } else {
+        openPdfBtn.disabled = false;
+        openPdfBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
+    }
+
     function openPDF(id) {
-      fetch(`/api/open-pdf?id=${id}`)
-        .then(res => {
-          if (!res.ok) alert("Could not open PDF file.");
-        });
+      fetch(`/api/open-pdf?id=${id}`);
     }
 
-    // 4. Client-side Search Filter
     searchInput.addEventListener('input', (e) => {
       const query = e.target.value.toLowerCase();
       const filtered = allPapers.filter(paper => 
@@ -110,7 +203,6 @@
       renderPapers(filtered);
     });
 
-    // Load library immediately on page load
     loadLibrary();
   </script>
 </body>
