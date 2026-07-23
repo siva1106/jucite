@@ -5,130 +5,199 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Jucite Desktop</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Using FontAwesome for Zotero-like icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    /* Prevent text selection to feel like a native desktop app */
     body { user-select: none; overflow: hidden; }
-    .pane-scroll { overflow-y: auto; height: calc(100vh - 80px); }
+    .pane-scroll { overflow-y: auto; height: calc(100vh - 75px); }
     .selected-row { background-color: #3b82f6 !important; color: white !important; }
     .selected-row td { border-color: #3b82f6 !important; }
+    .dropdown-menu { display: none; position: absolute; top: 24px; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 50; width: 180px; }
+    .dropdown-item { padding: 6px 12px; font-size: 11px; cursor: pointer; color: #334155; display: flex; items-center; gap: 8px; }
+    .dropdown-item:hover { background: #3b82f6; color: white; }
   </style>
 </head>
-<body class="bg-gray-200 text-sm font-sans h-screen flex flex-col">
+<body class="bg-gray-200 text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
 
-  <!-- TOP MENU BAR (Like native Windows/Linux apps) -->
-  <div class="bg-white border-b border-gray-300 flex items-center px-2 py-1 text-xs">
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">File</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Edit</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">View</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Tools</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Help</div>
+  <!-- TOP MENU BAR (WITH ACTIVE DROPDOWNS!) -->
+  <div class="bg-white border-b border-gray-300 flex items-center px-2 py-1 text-xs text-gray-700 relative">
+    
+    <!-- FILE MENU -->
+    <div class="relative">
+      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'file-menu')">File</div>
+      <div id="file-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="promptNewCollection()"><i class="fa-solid fa-folder-plus text-yellow-600"></i> New Collection</div>
+        <div class="dropdown-item" onclick="promptNewGroup()"><i class="fa-solid fa-users text-blue-600"></i> New Group Library</div>
+        <div class="dropdown-item" onclick="openDoiModal()"><i class="fa-solid fa-wand-magic-sparkles text-purple-600"></i> Add Item by DOI</div>
+        <hr class="border-gray-200 my-1">
+        <div class="dropdown-item" onclick="alert('Import feature coming soon!')"><i class="fa-solid fa-file-import"></i> Import...</div>
+        <div class="dropdown-item" onclick="window.close()"><i class="fa-solid fa-power-off text-red-500"></i> Exit Jucite</div>
+      </div>
+    </div>
+
+    <!-- EDIT MENU -->
+    <div class="relative">
+      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'edit-menu')">Edit</div>
+      <div id="edit-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="alert('Undo')">Undo</div>
+        <div class="dropdown-item" onclick="alert('Redo')">Redo</div>
+        <hr class="border-gray-200 my-1">
+        <div class="dropdown-item" onclick="loadLibrary()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Library</div>
+      </div>
+    </div>
+
+    <!-- VIEW MENU -->
+    <div class="relative">
+      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'view-menu')">View</div>
+      <div id="view-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="location.reload()">Reload Interface</div>
+        <div class="dropdown-item" onclick="document.documentElement.requestFullscreen()">Fullscreen Mode</div>
+      </div>
+    </div>
+
+    <!-- TOOLS MENU -->
+    <div class="relative">
+      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'tools-menu')">Tools</div>
+      <div id="tools-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="alert('Google Drive Sync API ready')"><i class="fa-cloud text-blue-500"></i> Sync Google Drive</div>
+        <div class="dropdown-item" onclick="window.open('chrome://extensions')"><i class="fa-puzzle-piece text-green-500"></i> Browser Connectors</div>
+      </div>
+    </div>
+
+    <!-- HELP MENU -->
+    <div class="relative">
+      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'help-menu')">Help</div>
+      <div id="help-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="alert('Jucite v1.0 - Built with Julia & SQLite')"><i class="fa-solid fa-circle-info"></i> About Jucite</div>
+        <div class="dropdown-item" onclick="window.open('https://github.com/citation-style-language/styles')"><i class="fa-solid fa-book"></i> CSL Style Repository</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- TOOLBAR -->
-  <div class="bg-gray-100 border-b border-gray-300 flex items-center p-2 gap-4">
-    <div class="flex gap-2 text-gray-600">
-      <button class="hover:bg-gray-200 p-1 rounded" title="New Collection"><i class="fa-solid fa-folder-plus text-green-600"></i></button>
-      <button class="hover:bg-gray-200 p-1 rounded" title="Add Item by DOI"><i class="fa-solid fa-wand-magic-sparkles text-purple-500"></i></button>
-    </div>
+  <div class="bg-gray-100 border-b border-gray-300 flex items-center p-2 gap-2">
+    <button onclick="promptNewCollection()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="New Collection">
+      <i class="fa-solid fa-folder-plus text-yellow-600"></i> New Collection
+    </button>
     
-    <div class="flex-grow"></div> <!-- Spacer -->
+    <button onclick="promptNewGroup()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="New Group Library">
+      <i class="fa-solid fa-users text-blue-600"></i> New Group
+    </button>
+
+    <button onclick="openDoiModal()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="Add Item by DOI">
+      <i class="fa-solid fa-wand-magic-sparkles text-purple-600"></i> Add by DOI
+    </button>
+    
+    <div class="flex-grow"></div>
 
     <!-- Search Bar -->
     <div class="relative">
-      <i class="fa-solid fa-search absolute left-2 top-1.5 text-gray-400"></i>
-      <input type="text" id="search" placeholder="All Fields & Tags" 
-             class="pl-7 pr-2 py-1 rounded border border-gray-300 text-xs w-64 focus:outline-none focus:border-blue-500">
+      <i class="fa-solid fa-search absolute left-2 top-2 text-gray-400 text-xs"></i>
+      <input type="text" id="search" placeholder="Search All Fields & Tags" 
+             class="pl-7 pr-2 py-1 rounded border border-gray-300 text-xs w-64 focus:outline-none focus:border-blue-500"
+             oninput="filterPapers()">
     </div>
   </div>
 
   <!-- 3-PANE LAYOUT -->
   <div class="flex flex-1 overflow-hidden">
     
-    <!-- LEFT PANE: Collections -->
+    <!-- LEFT PANE: Collections & Groups -->
     <div class="w-64 bg-gray-50 border-r border-gray-300 flex flex-col">
-      <div class="pane-scroll p-2">
-        <div class="flex items-center gap-2 px-2 py-1 bg-blue-100 rounded text-gray-800 font-semibold cursor-pointer">
-          <i class="fa-solid fa-book text-blue-500"></i> My Library
+      <div class="pane-scroll p-2 text-xs space-y-1">
+        
+        <!-- MY LIBRARY -->
+        <div onclick="filterByGroup(null)" class="flex items-center gap-2 px-2 py-1.5 bg-blue-100 rounded text-gray-900 font-bold cursor-pointer">
+          <i class="fa-solid fa-book text-blue-600"></i> My Library
         </div>
-        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6 mt-1">
-          <i class="fa-solid fa-clock text-gray-400"></i> Recently Read
+        
+        <div id="collections-list" class="pl-4 space-y-1"></div>
+
+        <hr class="border-gray-200 my-2">
+
+        <!-- GROUP LIBRARIES SECTION -->
+        <div class="px-2 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider flex justify-between items-center">
+          <span>Group Libraries</span>
+          <i class="fa-solid fa-plus cursor-pointer text-gray-500 hover:text-blue-600" onclick="promptNewGroup()"></i>
         </div>
-        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6">
-          <i class="fa-solid fa-file-lines text-green-500"></i> My Publications
-        </div>
-        <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer pl-6">
-          <i class="fa-solid fa-trash text-red-400"></i> Trash
-        </div>
+        
+        <div id="groups-list" class="space-y-1"></div>
+
       </div>
     </div>
 
     <!-- MIDDLE PANE: Paper List -->
     <div class="flex-1 bg-white border-r border-gray-300 flex flex-col">
       <div class="pane-scroll">
-        <table class="w-full text-left border-collapse cursor-default">
+        <table class="w-full text-left border-collapse cursor-default text-xs">
           <thead class="bg-gray-100 border-b border-gray-300 sticky top-0">
-            <tr class="text-gray-600">
-              <th class="p-1 pl-2 border-r border-gray-300 font-normal w-6"></th>
-              <th class="p-1 pl-2 border-r border-gray-300 font-normal">Title</th>
-              <th class="p-1 pl-2 border-r border-gray-300 font-normal w-48">Creator</th>
-              <th class="p-1 pl-2 font-normal w-16">Year</th>
+            <tr class="text-gray-600 font-semibold">
+              <th class="p-1.5 pl-2 border-r border-gray-300 w-6"></th>
+              <th class="p-1.5 pl-2 border-r border-gray-300">Title</th>
+              <th class="p-1.5 pl-2 border-r border-gray-300 w-40">Creator</th>
+              <th class="p-1.5 pl-2 w-16">Year</th>
             </tr>
           </thead>
-          <tbody id="library-body" class="text-gray-800">
-            <!-- Papers load here -->
-          </tbody>
+          <tbody id="library-body" class="text-gray-800 divide-y divide-gray-100"></tbody>
         </table>
       </div>
     </div>
 
     <!-- RIGHT PANE: Metadata -->
-    <div class="w-72 bg-gray-50 flex flex-col">
+    <div class="w-80 bg-gray-50 flex flex-col">
       <div id="metadata-pane" class="pane-scroll p-4 hidden">
-        <div class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Item Type: <span class="text-gray-800 font-normal capitalize">Journal Article</span></div>
-        <h2 id="meta-title" class="text-lg font-bold text-gray-900 leading-tight mb-4 select-text"></h2>
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Item Type: Journal Article</div>
+        <h2 id="meta-title" class="text-sm font-bold text-gray-900 leading-snug mb-3 select-text"></h2>
         
         <div class="grid grid-cols-3 gap-y-2 text-xs mb-4 select-text">
-          <div class="text-gray-500 text-right pr-2">Authors:</div>
-          <div id="meta-authors" class="col-span-2 text-gray-900 font-semibold"></div>
+          <div class="text-gray-400 text-right pr-2">Authors:</div>
+          <div id="meta-authors" class="col-span-2 text-gray-800 font-semibold"></div>
           
-          <div class="text-gray-500 text-right pr-2">Journal:</div>
-          <div id="meta-journal" class="col-span-2 text-gray-900"></div>
+          <div class="text-gray-400 text-right pr-2">Journal:</div>
+          <div id="meta-journal" class="col-span-2 text-gray-800"></div>
           
-          <div class="text-gray-500 text-right pr-2">Year:</div>
-          <div id="meta-year" class="col-span-2 text-gray-900"></div>
+          <div class="text-gray-400 text-right pr-2">Year:</div>
+          <div id="meta-year" class="col-span-2 text-gray-800"></div>
         </div>
 
-        <hr class="border-gray-300 my-4">
-
-        <button id="open-pdf-btn" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold py-1.5 px-4 rounded shadow-sm flex items-center justify-center gap-2 transition">
+        <button id="open-pdf-btn" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold py-1.5 px-3 rounded shadow-sm flex items-center justify-center gap-2 transition text-xs">
           <i class="fa-solid fa-file-pdf text-red-500"></i> Open PDF
         </button>
       </div>
       
-      <div id="empty-metadata" class="h-full flex items-center justify-center text-gray-400 p-4 text-center">
+      <div id="empty-metadata" class="h-full flex items-center justify-center text-gray-400 text-xs p-4 text-center">
         Select an item to view its details
       </div>
     </div>
 
   </div>
 
-  <script>
-    const libraryBody = document.getElementById('library-body');
-    const searchInput = document.getElementById('search');
-    
-    // Metadata Panel elements
-    const metadataPane = document.getElementById('metadata-pane');
-    const emptyMetadata = document.getElementById('empty-metadata');
-    const metaTitle = document.getElementById('meta-title');
-    const metaAuthors = document.getElementById('meta-authors');
-    const metaJournal = document.getElementById('meta-journal');
-    const metaYear = document.getElementById('meta-year');
-    const openPdfBtn = document.getElementById('open-pdf-btn');
+  <!-- ADD BY DOI MODAL -->
+  <div id="doiModal" class="hidden fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm border border-gray-200">
+      <h3 class="font-bold text-gray-800 text-xs mb-2">Add Item by Identifier (DOI)</h3>
+      <input type="text" id="doiInput" placeholder="e.g., 10.1371/journal.pone.0115069" class="w-full p-2 border border-gray-300 rounded text-xs mb-3">
+      <div class="flex justify-end gap-2">
+        <button onclick="submitDoi()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded text-xs">Add Paper</button>
+        <button onclick="closeDoiModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-3 py-1.5 rounded text-xs">Cancel</button>
+      </div>
+    </div>
+  </div>
 
+  <script>
     let allPapers = [];
-    let selectedPaperId = null;
+
+    // DROPDOWN MENU CONTROLLER
+    function toggleDropdown(e, menuId) {
+      e.stopPropagation();
+      closeAllDropdowns();
+      const menu = document.getElementById(menuId);
+      if (menu) menu.style.display = 'block';
+    }
+
+    function closeAllDropdowns() {
+      document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+    }
 
     function loadLibrary() {
       fetch('/api/library')
@@ -137,71 +206,117 @@
           allPapers = data;
           renderPapers(allPapers);
         });
+      loadCollections();
     }
 
     function renderPapers(papers) {
+      const libraryBody = document.getElementById('library-body');
+      if (papers.length === 0) {
+        libraryBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-400">No papers found.</td></tr>`;
+        return;
+      }
       libraryBody.innerHTML = papers.map(paper => {
-        // Just grab the first author's family name for the table view
         let creator = "Unknown";
         if (paper.authors && paper.authors.length > 0) {
-          creator = paper.authors[0].family;
-          if (paper.authors.length > 1) creator += " et al.";
+          creator = paper.authors[0].family + (paper.authors.length > 1 ? " et al." : "");
         }
-
         return `
-        <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" class="border-b border-gray-200 hover:bg-blue-50 transition cursor-pointer">
-          <td class="p-1 pl-2 text-center text-gray-400">
-            <i class="fa-solid fa-file-lines"></i>
-          </td>
-          <td class="p-1 pl-2 truncate max-w-[200px]">${paper.title}</td>
-          <td class="p-1 pl-2 truncate">${creator}</td>
-          <td class="p-1 pl-2">${paper.year}</td>
-        </tr>
-      `}).join('');
+        <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" class="hover:bg-blue-50 transition cursor-pointer border-b border-gray-100">
+          <td class="p-1.5 pl-2 text-center text-gray-400"><i class="fa-solid fa-file-lines"></i></td>
+          <td class="p-1.5 pl-2 truncate max-w-[250px] font-medium">${paper.title}</td>
+          <td class="p-1.5 pl-2 truncate">${creator}</td>
+          <td class="p-1.5 pl-2">${paper.year}</td>
+        </tr>`;
+      }).join('');
     }
 
     function selectPaper(id) {
-      // Remove selection styling from all rows
-      document.querySelectorAll('tr').forEach(row => row.classList.remove('selected-row'));
-      // Add selection styling to clicked row
-      document.getElementById(`row-${id}`).classList.add('selected-row');
+      document.querySelectorAll('tr').forEach(r => r.classList.remove('selected-row'));
+      const row = document.getElementById(`row-${id}`);
+      if(row) row.classList.add('selected-row');
       
       const paper = allPapers.find(p => p.id === id);
-      selectedPaperId = paper.id;
+      if(!paper) return;
 
-      // Update right metadata panel
-      emptyMetadata.classList.add('hidden');
-      metadataPane.classList.remove('hidden');
+      document.getElementById('empty-metadata').classList.add('hidden');
+      document.getElementById('metadata-pane').classList.remove('hidden');
 
-      metaTitle.textContent = paper.title;
-      metaJournal.textContent = paper.journal;
-      metaYear.textContent = paper.year;
-      
-      metaAuthors.innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
+      document.getElementById('meta-title').textContent = paper.title;
+      document.getElementById('meta-journal').textContent = paper.journal;
+      document.getElementById('meta-year').textContent = paper.year;
+      document.getElementById('meta-authors').innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
 
-      openPdfBtn.onclick = () => openPDF(paper.id);
-      if(!paper.pdf_path) {
-        openPdfBtn.disabled = true;
-        openPdfBtn.classList.add('opacity-50', 'cursor-not-allowed');
-      } else {
-        openPdfBtn.disabled = false;
-        openPdfBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      }
+      const openPdfBtn = document.getElementById('open-pdf-btn');
+      openPdfBtn.onclick = () => fetch(`/api/open-pdf?id=${paper.id}`);
+      openPdfBtn.disabled = !paper.pdf_path;
     }
 
-    function openPDF(id) {
-      fetch(`/api/open-pdf?id=${id}`);
-    }
-
-    searchInput.addEventListener('input', (e) => {
-      const query = e.target.value.toLowerCase();
-      const filtered = allPapers.filter(paper => 
-        paper.title.toLowerCase().includes(query) || 
-        paper.journal.toLowerCase().includes(query) || 
-        paper.year.toString().includes(query)
+    function filterPapers() {
+      const q = document.getElementById('search').value.toLowerCase();
+      const filtered = allPapers.filter(p => 
+        p.title.toLowerCase().includes(q) || 
+        p.journal.toLowerCase().includes(q) || 
+        p.year.toString().includes(q)
       );
       renderPapers(filtered);
-    });
+    }
+
+    function openDoiModal() { document.getElementById('doiModal').classList.remove('hidden'); }
+    function closeDoiModal() { document.getElementById('doiModal').classList.add('hidden'); }
+    
+    function submitDoi() {
+      const doi = document.getElementById('doiInput').value.trim();
+      if(!doi) return;
+      alert("Fetching paper from internet...");
+      fetch('/api/save', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({doi: doi})
+      }).then(() => {
+        closeDoiModal();
+        loadLibrary();
+      });
+    }
+
+    // --- GROUP & COLLECTION CREATION ENGINE ---
+    function loadCollections() {
+      fetch('/api/collections')
+        .then(res => res.json())
+        .then(cols => {
+          const colList = document.getElementById('collections-list');
+          const groupList = document.getElementById('groups-list');
+          
+          colList.innerHTML = cols.filter(c => c.is_group === 0).map(c => `
+            <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer">
+              <i class="fa-solid fa-folder text-yellow-500"></i> ${c.name}
+            </div>
+          `).join('');
+
+          groupList.innerHTML = cols.filter(c => c.is_group === 1).map(c => `
+            <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-800 font-semibold cursor-pointer">
+              <i class="fa-solid fa-users text-blue-500"></i> ${c.name}
+            </div>
+          `).join('');
+        });
+    }
+
+    function promptNewCollection() {
+      const name = prompt("Enter Collection Name:");
+      if(name) saveCollection(name, 0);
+    }
+
+    function promptNewGroup() {
+      const name = prompt("Enter Group Library Name (e.g., EnterococcusFaecalis):");
+      if(name) saveCollection(name, 1);
+    }
+
+    function saveCollection(name, isGroup) {
+      fetch('/api/collections', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: name, is_group: isGroup})
+      }).then(() => loadCollections());
+    }
 
     loadLibrary();
   </script>

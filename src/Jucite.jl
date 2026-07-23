@@ -19,6 +19,10 @@ function init_db()
     SQLite.execute(db, "CREATE TABLE IF NOT EXISTS papers (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, doi TEXT UNIQUE, year INTEGER, journal TEXT, pdf_path TEXT)")
     SQLite.execute(db, "CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     SQLite.execute(db, "CREATE TABLE IF NOT EXISTS paper_authors (paper_id INTEGER, author_id INTEGER, FOREIGN KEY(paper_id) REFERENCES papers(id), FOREIGN KEY(author_id) REFERENCES authors(id), PRIMARY KEY (paper_id, author_id))")
+    
+    # NEW: Collections & Group Libraries table
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, is_group INTEGER DEFAULT 0)")
+    
     return db
 end
 
@@ -364,6 +368,45 @@ end
         "Access-Control-Allow-Headers" => "*",
         "Access-Control-Allow-Private-Network" => "true"
     ], "")
+end
+# ======================================================
+# --- COLLECTIONS & GROUPS API (ZOTERO STYLE) ---
+# ======================================================
+
+@route ["OPTIONS"] "/api/collections" function(req::HTTP.Request)
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*"
+    ], "")
+end
+
+@get "/api/collections" function(req::HTTP.Request)
+    db = SQLite.DB(DB_PATH)
+    df = DBInterface.execute(db, "SELECT id, name, is_group FROM collections") |> DataFrame
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    
+    cols = [Dict("id" => row.id, "name" => row.name, "is_group" => row.is_group) for row in eachrow(df)]
+    return HTTP.Response(200, headers, JSON3.write(cols))
+end
+
+@post "/api/collections" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = json(req)
+        col_name = String(data.name)
+        is_grp = Int(data.is_group)
+        
+        db = SQLite.DB(DB_PATH)
+        stmt = SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)")
+        SQLite.execute(stmt, (col_name, is_grp))
+        
+        println("📁 Saved Collection/Group: ", col_name)
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Error saving collection: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
+    end
 end
 # ======================================================
 # --- 10,000+ CSL STYLE SEARCH ENGINE ---
