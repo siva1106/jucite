@@ -11,17 +11,16 @@
     .pane-scroll { overflow-y: auto; height: calc(100vh - 75px); }
     .selected-row { background-color: #3b82f6 !important; color: white !important; }
     .selected-row td { border-color: #3b82f6 !important; }
+    .selected-row a { color: white !important; }
     .dropdown-menu { display: none; position: absolute; top: 24px; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 50; width: 180px; }
-    .dropdown-item { padding: 6px 12px; font-size: 11px; cursor: pointer; color: #334155; display: flex; items-center; gap: 8px; }
+    .dropdown-item { padding: 6px 12px; font-size: 11px; cursor: pointer; color: #334155; display: flex; align-items: center; gap: 8px; }
     .dropdown-item:hover { background: #3b82f6; color: white; }
   </style>
 </head>
 <body class="bg-gray-200 text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
 
-  <!-- TOP MENU BAR (WITH ACTIVE DROPDOWNS!) -->
+  <!-- TOP MENU BAR -->
   <div class="bg-white border-b border-gray-300 flex items-center px-2 py-1 text-xs text-gray-700 relative">
-    
-    <!-- FILE MENU -->
     <div class="relative">
       <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'file-menu')">File</div>
       <div id="file-menu" class="dropdown-menu">
@@ -29,49 +28,13 @@
         <div class="dropdown-item" onclick="promptNewGroup()"><i class="fa-solid fa-users text-blue-600"></i> New Group Library</div>
         <div class="dropdown-item" onclick="openDoiModal()"><i class="fa-solid fa-wand-magic-sparkles text-purple-600"></i> Add Item by DOI</div>
         <hr class="border-gray-200 my-1">
-        <div class="dropdown-item" onclick="alert('Import feature coming soon!')"><i class="fa-solid fa-file-import"></i> Import...</div>
         <div class="dropdown-item" onclick="window.close()"><i class="fa-solid fa-power-off text-red-500"></i> Exit Jucite</div>
       </div>
     </div>
-
-    <!-- EDIT MENU -->
-    <div class="relative">
-      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'edit-menu')">Edit</div>
-      <div id="edit-menu" class="dropdown-menu">
-        <div class="dropdown-item" onclick="alert('Undo')">Undo</div>
-        <div class="dropdown-item" onclick="alert('Redo')">Redo</div>
-        <hr class="border-gray-200 my-1">
-        <div class="dropdown-item" onclick="loadLibrary()"><i class="fa-solid fa-arrows-rotate"></i> Refresh Library</div>
-      </div>
-    </div>
-
-    <!-- VIEW MENU -->
-    <div class="relative">
-      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'view-menu')">View</div>
-      <div id="view-menu" class="dropdown-menu">
-        <div class="dropdown-item" onclick="location.reload()">Reload Interface</div>
-        <div class="dropdown-item" onclick="document.documentElement.requestFullscreen()">Fullscreen Mode</div>
-      </div>
-    </div>
-
-    <!-- TOOLS MENU -->
-    <div class="relative">
-      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'tools-menu')">Tools</div>
-      <div id="tools-menu" class="dropdown-menu">
-        <div class="dropdown-item" onclick="alert('Google Drive Sync API ready')"><i class="fa-cloud text-blue-500"></i> Sync Google Drive</div>
-        <div class="dropdown-item" onclick="window.open('chrome://extensions')"><i class="fa-puzzle-piece text-green-500"></i> Browser Connectors</div>
-      </div>
-    </div>
-
-    <!-- HELP MENU -->
-    <div class="relative">
-      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'help-menu')">Help</div>
-      <div id="help-menu" class="dropdown-menu">
-        <div class="dropdown-item" onclick="alert('Jucite v1.0 - Built with Julia & SQLite')"><i class="fa-solid fa-circle-info"></i> About Jucite</div>
-        <div class="dropdown-item" onclick="window.open('https://github.com/citation-style-language/styles')"><i class="fa-solid fa-book"></i> CSL Style Repository</div>
-      </div>
-    </div>
-
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Edit</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">View</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Tools</div>
+    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Help</div>
   </div>
 
   <!-- TOOLBAR -->
@@ -90,7 +53,6 @@
     
     <div class="flex-grow"></div>
 
-    <!-- Search Bar -->
     <div class="relative">
       <i class="fa-solid fa-search absolute left-2 top-2 text-gray-400 text-xs"></i>
       <input type="text" id="search" placeholder="Search All Fields & Tags" 
@@ -102,37 +64,31 @@
   <!-- 3-PANE LAYOUT -->
   <div class="flex flex-1 overflow-hidden">
     
-    <!-- LEFT PANE: Collections & Groups -->
+    <!-- LEFT PANE -->
     <div class="w-64 bg-gray-50 border-r border-gray-300 flex flex-col">
       <div class="pane-scroll p-2 text-xs space-y-1">
-        
-        <!-- MY LIBRARY -->
         <div onclick="filterByGroup(null)" class="flex items-center gap-2 px-2 py-1.5 bg-blue-100 rounded text-gray-900 font-bold cursor-pointer">
           <i class="fa-solid fa-book text-blue-600"></i> My Library
         </div>
-        
         <div id="collections-list" class="pl-4 space-y-1"></div>
-
         <hr class="border-gray-200 my-2">
-
-        <!-- GROUP LIBRARIES SECTION -->
         <div class="px-2 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider flex justify-between items-center">
           <span>Group Libraries</span>
           <i class="fa-solid fa-plus cursor-pointer text-gray-500 hover:text-blue-600" onclick="promptNewGroup()"></i>
         </div>
-        
         <div id="groups-list" class="space-y-1"></div>
-
       </div>
     </div>
 
-    <!-- MIDDLE PANE: Paper List -->
+    <!-- MIDDLE PANE: PAPER LIST (DOUBLE CLICK TO OPEN PDF!) -->
     <div class="flex-1 bg-white border-r border-gray-300 flex flex-col">
       <div class="pane-scroll">
         <table class="w-full text-left border-collapse cursor-default text-xs">
           <thead class="bg-gray-100 border-b border-gray-300 sticky top-0">
             <tr class="text-gray-600 font-semibold">
-              <th class="p-1.5 pl-2 border-r border-gray-300 w-6"></th>
+              <th class="p-1.5 pl-2 border-r border-gray-300 w-8 text-center" title="Attachment Status">
+                <i class="fa-solid fa-paperclip"></i>
+              </th>
               <th class="p-1.5 pl-2 border-r border-gray-300">Title</th>
               <th class="p-1.5 pl-2 border-r border-gray-300 w-40">Creator</th>
               <th class="p-1.5 pl-2 w-16">Year</th>
@@ -143,7 +99,7 @@
       </div>
     </div>
 
-    <!-- RIGHT PANE: Metadata -->
+    <!-- RIGHT PANE: METADATA DETAILS (NO BUTTON, EXACTLY LIKE ZOTERO!) -->
     <div class="w-80 bg-gray-50 flex flex-col">
       <div id="metadata-pane" class="pane-scroll p-4 hidden">
         <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Item Type: Journal Article</div>
@@ -158,11 +114,17 @@
           
           <div class="text-gray-400 text-right pr-2">Year:</div>
           <div id="meta-year" class="col-span-2 text-gray-800"></div>
+
+          <div class="text-gray-400 text-right pr-2">DOI:</div>
+          <div id="meta-doi" class="col-span-2 text-blue-600 font-medium truncate"></div>
         </div>
 
-        <button id="open-pdf-btn" class="w-full bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 font-semibold py-1.5 px-3 rounded shadow-sm flex items-center justify-center gap-2 transition text-xs">
-          <i class="fa-solid fa-file-pdf text-red-500"></i> Open PDF
-        </button>
+        <hr class="border-gray-200 my-3">
+
+        <!-- ATTACHMENTS STATUS (ZOTERO STYLE) -->
+        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Attachments</div>
+        <div id="attachment-info" class="p-2 bg-white border border-gray-200 rounded text-xs"></div>
+
       </div>
       
       <div id="empty-metadata" class="h-full flex items-center justify-center text-gray-400 text-xs p-4 text-center">
@@ -187,7 +149,6 @@
   <script>
     let allPapers = [];
 
-    // DROPDOWN MENU CONTROLLER
     function toggleDropdown(e, menuId) {
       e.stopPropagation();
       closeAllDropdowns();
@@ -220,9 +181,18 @@
         if (paper.authors && paper.authors.length > 0) {
           creator = paper.authors[0].family + (paper.authors.length > 1 ? " et al." : "");
         }
+        
+        // ZOTERO ATTACHMENT ICON: Red PDF icon if file exists, gray file icon if no PDF!
+        const iconHtml = paper.pdf_path 
+          ? `<i class="fa-solid fa-file-pdf text-red-500 text-sm" title="PDF Attached (Double-click to open)"></i>` 
+          : `<i class="fa-solid fa-file-lines text-gray-300" title="Metadata only"></i>`;
+
         return `
-        <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" class="hover:bg-blue-50 transition cursor-pointer border-b border-gray-100">
-          <td class="p-1.5 pl-2 text-center text-gray-400"><i class="fa-solid fa-file-lines"></i></td>
+        <tr id="row-${paper.id}" 
+            onclick="selectPaper(${paper.id})" 
+            ondblclick="handleDblClick(${paper.id})" 
+            class="hover:bg-blue-50 transition cursor-pointer border-b border-gray-100">
+          <td class="p-1.5 text-center">${iconHtml}</td>
           <td class="p-1.5 pl-2 truncate max-w-[250px] font-medium">${paper.title}</td>
           <td class="p-1.5 pl-2 truncate">${creator}</td>
           <td class="p-1.5 pl-2">${paper.year}</td>
@@ -245,10 +215,38 @@
       document.getElementById('meta-journal').textContent = paper.journal;
       document.getElementById('meta-year').textContent = paper.year;
       document.getElementById('meta-authors').innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
+      
+      // Live DOI link
+      document.getElementById('meta-doi').innerHTML = `<a href="https://doi.org/${paper.doi}" target="_blank" class="hover:underline">${paper.doi || 'N/A'}</a>`;
 
-      const openPdfBtn = document.getElementById('open-pdf-btn');
-      openPdfBtn.onclick = () => fetch(`/api/open-pdf?id=${paper.id}`);
-      openPdfBtn.disabled = !paper.pdf_path;
+      // Zotero-style Attachment info box
+      const attachInfo = document.getElementById('attachment-info');
+      if (paper.pdf_path) {
+        attachInfo.innerHTML = `
+          <div class="flex items-center gap-2 text-gray-700">
+            <i class="fa-solid fa-file-pdf text-red-500 text-sm"></i>
+            <span class="font-medium truncate">Full Text PDF</span>
+          </div>
+          <div class="text-[10px] text-gray-400 mt-1">Double-click item in table to open PDF</div>
+        `;
+      } else {
+        attachInfo.innerHTML = `
+          <div class="text-gray-400 italic">No PDF attached (Paywalled journal)</div>
+        `;
+      }
+    }
+
+    // --- ZOTERO DOUBLE-CLICK TO OPEN PDF ---
+    function handleDblClick(id) {
+      const paper = allPapers.find(p => p.id === id);
+      if (paper && paper.pdf_path) {
+        fetch(`/api/open-pdf?id=${paper.id}`);
+      } else {
+        alert("No local PDF attached to this paper. Opening DOI on web instead!");
+        if (paper && paper.doi) {
+          window.open(`https://doi.org/${paper.doi}`, '_blank');
+        }
+      }
     }
 
     function filterPapers() {
@@ -267,7 +265,7 @@
     function submitDoi() {
       const doi = document.getElementById('doiInput').value.trim();
       if(!doi) return;
-      alert("Fetching paper from internet...");
+      alert("Fetching paper metadata from Crossref...");
       fetch('/api/save', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -278,7 +276,6 @@
       });
     }
 
-    // --- GROUP & COLLECTION CREATION ENGINE ---
     function loadCollections() {
       fetch('/api/collections')
         .then(res => res.json())
@@ -306,7 +303,7 @@
     }
 
     function promptNewGroup() {
-      const name = prompt("Enter Group Library Name (e.g., EnterococcusFaecalis):");
+      const name = prompt("Enter Group Library Name (e.g. EnterococcusFaecalis):");
       if(name) saveCollection(name, 1);
     }
 
