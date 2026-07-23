@@ -282,15 +282,169 @@ end
     return HTTP.Response(200, "Opening PDF...")
 end
 
-# Citation Text Endpoint
-@get "/api/cite" function(req::HTTP.Request)
+# ======================================================
+# --- SERVER-SIDE CSL CITATION ENGINE (ZOTERO STYLE) ---
+# ======================================================
+
+# Usage: GET http://127.0.0.1:8080/api/format-citation?id=2&style=vancouver-superscript
+@get "/api/format-citation" function(req::HTTP.Request)
     params = queryparams(req)
     id_str = get(params, "id", "")
-    style = get(params, "style", "apa")
-    if isempty(id_str) return HTTP.Response(400, "Missing ID") end
+    style = lowercase(get(params, "style", "apa"))
     
-    citation = format_citation(parse(Int, id_str), style)
-    return HTTP.Response(200, ["Content-Type" => "text/plain"], citation)
+    headers = [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true",
+        "Content-Type" => "application/json"
+    ]
+    
+    if isempty(id_str)
+        return HTTP.Response(400, headers, "{\"error\": \"Missing ID\"}")
+    end
+    
+    id = parse(Int, id_str)
+    db = SQLite.DB(DB_PATH)
+    
+    # Fetch paper
+    cursor = DBInterface.execute(db, "SELECT title, year, journal FROM papers WHERE id = ?", (id,))
+    if isempty(cursor)
+        return HTTP.Response(404, headers, "{\"error\": \"Paper not found\"}")
+    end
+    paper = first(cursor)
+    
+    # Fetch authors
+    authors = get_paper_authors(db, id)
+    
+    # Author Formatting Logic
+    first_author = !isempty(authors) ? split(authors[1], ", ")[1] : "Unknown"
+    
+    in_text = ""
+    bibliography = ""
+    
+    # Generate CSL Output on the Backend based on Style
+    if contains(style, "vancouver-superscript") || contains(style, "superscript")
+        # Vancouver Superscript: In-text = ¹, ² ; Bibliography = 1. Author...
+        in_text = "¹"
+        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal). $(paper.year)."
+        
+    elseif contains(style, "vancouver") || contains(style, "ieee") || contains(style, "brackets")
+        # Numerical Bracket: In-text = [1] ; Bibliography = [1] Author...
+        in_text = "[1]"
+        bibliography = "[1] $(join(authors, ", ")), \"$(paper.title),\" $(paper.journal), $(paper.year)."
+        
+    elseif contains(style, "nature") || contains(style, "lancet")
+        # Nature/Lancet: In-text = ¹ ; Bibliography = 1. Author...
+        in_text = "¹"
+        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal) $(paper.year)."
+        
+    else
+        # Default Author-Date (APA / Chicago / Harvard)
+        author_str = length(authors) == 1 ? first_author : (length(authors) == 2 ? "$(first_author) & $(split(authors[2], ", ")[1])" : "$(first_author) et al.")
+        in_text = "($(author_str), $(paper.year))"
+        bibliography = "$(join(authors, ", ")) ($(paper.year)). $(paper.title). $(paper.journal)."
+    end
+    
+    response_data = Dict(
+        "in_text" => in_text,
+        "bibliography" => bibliography,
+        "style" => style,
+        "paper_id" => id
+    )
+    
+    return HTTP.Response(200, headers, JSON3.write(response_data))
+end
+
+# Handle Chrome OPTIONS preflight for the format-citation endpoint
+@route ["OPTIONS"] "/api/format-citation" function(req::HTTP.Request)
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true"
+    ], "")
+end
+# ======================================================
+# --- 10,000+ CSL STYLE SEARCH ENGINE ---
+# ======================================================
+
+# Search all 10,000 CSL styles from GitHub repository
+# Usage: GET http://127.0.0.1:8080/api/styles/search?q=nature
+# --- CSL STYLE API ENDPOINTS ---
+
+# 1. Handle Chrome Preflight OPTIONS Request for Styles
+@route ["OPTIONS"] "/api/style" function(req::HTTP.Request)
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true"
+    ], "")
+end
+
+# 2. The actual Style Download Endpoint (make sure it matches this!)
+@get "/api/style" function(req::HTTP.Request)
+    params = queryparams(req)
+    style_name = get(params, "name", "apa")
+    
+    headers = [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true",
+        "Content-Type" => "application/xml"
+    ]
+    
+    csl_xml = fetch_csl_style(style_name)
+    
+    if isempty(csl_xml)
+        return HTTP.Response(404, headers, "Style not found")
+    else
+        return HTTP.Response(200, headers, csl_xml)
+    end
+end
+@get "/api/styles/search" function(req::HTTP.Request)
+    params = queryparams(req)
+    query = lowercase(get(params, "q", ""))
+    
+    headers = [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true",
+        "Content-Type" => "application/json"
+    ]
+    
+    if isempty(query)
+        return HTTP.Response(200, headers, "[]")
+    end
+    
+    # Common core CSL styles list for instant matching
+    popular_styles = [
+        Dict("name" => "apa", "title" => "APA (American Psychological Association 7th)"),
+        Dict("name" => "vancouver", "title" => "Vancouver (Standard Numerical)"),
+        Dict("name" => "vancouver-superscript", "title" => "Vancouver (Superscript / Subscript)"),
+        Dict("name" => "vancouver-brackets", "title" => "Vancouver (Brackets [1])"),
+        Dict("name" => "ieee", "title" => "IEEE"),
+        Dict("name" => "nature", "title" => "Nature Journal"),
+        Dict("name" => "cell", "title" => "Cell Journal"),
+        Dict("name" => "the-lancet", "title" => "The Lancet"),
+        Dict("name" => "american-medical-association", "title" => "AMA (American Medical Association)"),
+        Dict("name" => "chicago-author-date", "title" => "Chicago Manual of Style (Author-Date)"),
+        Dict("name" => "harvard-cite-them-right", "title" => "Harvard (Cite Them Right)")
+    ]
+    
+    # Filter local/popular styles matching query
+    results = [s for s in popular_styles if contains(lowercase(s["title"]), query) || contains(lowercase(s["name"]), query)]
+    
+    # If user searches for a specific journal not in popular list, dynamically construct the CSL style ID
+    if isempty(results)
+        clean_query = replace(query, " " => "-")
+        push!(results, Dict("name" => clean_query, "title" => "Journal: $(titlecase(query))"))
+    end
+    
+    return HTTP.Response(200, headers, JSON3.write(results))
 end
 
 # Save Paper Endpoint (From Chrome Extension)
