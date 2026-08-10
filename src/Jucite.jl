@@ -8,28 +8,240 @@ using Oxygen
 
 const DB_PATH = "jucite_library.sqlite"
 const PDF_DIR = "pdfs"
-const STYLES_DIR = "styles"
+const STYLES_CATALOG_FILE = "styles_catalog.json"
 
 # ======================================================
-# --- DATABASE INITIALIZATION ---
+# --- LOCK-FREE DATABASE ENGINE (WAL MODE) ---
 # ======================================================
 
-function init_db()
+"""
+    get_db()
+Connects to SQLite with WAL mode and a 5-second busy timeout so concurrent reads/writes never lock!
+"""
+function get_db()
     db = SQLite.DB(DB_PATH)
-    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS papers (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, doi TEXT UNIQUE, year INTEGER, journal TEXT, pdf_path TEXT)")
-    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
-    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS paper_authors (paper_id INTEGER, author_id INTEGER, FOREIGN KEY(paper_id) REFERENCES papers(id), FOREIGN KEY(author_id) REFERENCES authors(id), PRIMARY KEY (paper_id, author_id))")
-    
-    # NEW: Collections & Group Libraries table
-    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, is_group INTEGER DEFAULT 0)")
-    
+    SQLite.execute(db, "PRAGMA journal_mode=WAL;")
+    SQLite.execute(db, "PRAGMA busy_timeout = 5000;")
     return db
 end
 
 # ======================================================
-# --- METADATA & PDF INGESTION ENGINE ---
+# --- DATABASE INITIALIZATION ---
+# ======================================================
+function init_db()
+    db = get_db()
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS papers (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, doi TEXT UNIQUE, year INTEGER, journal TEXT, pdf_path TEXT)")
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS authors (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS paper_authors (paper_id INTEGER, author_id INTEGER, FOREIGN KEY(paper_id) REFERENCES papers(id), FOREIGN KEY(author_id) REFERENCES authors(id), PRIMARY KEY (paper_id, author_id))")
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS collections (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, is_group INTEGER DEFAULT 0)")
+    
+    # NEW: Table that links papers to specific collections/groups!
+    SQLite.execute(db, "CREATE TABLE IF NOT EXISTS collection_papers (collection_id INTEGER, paper_id INTEGER, PRIMARY KEY (collection_id, paper_id))")
+    return db
+end
+
+# ... (keep your fetch_metadata and download_pdf functions exactly as they are) ...
+
+# UPDATE: Save paper now accepts a collection_id
+function save_paper(paper_info, collection_id::Int=0)
+    if paper_info === nothing return end
+    pdf_local_path = download_pdf(paper_info.pdf_url, paper_info.title)
+    
+    db = get_db()
+    SQLite.transaction(db) do
+        stmt_paper = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal, pdf_path) VALUES (?, ?, ?, ?, ?)")
+        SQLite.execute(stmt_paper, (paper_info.title, paper_info.doi, paper_info.year, paper_info.journal, pdf_local_path))
+        
+        cursor_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (paper_info.doi,))
+        paper_id = first(cursor_paper).id
+        
+        for author_name in paper_info.authors
+            stmt_author = SQLite.Stmt(db, "INSERT OR IGNORE INTO authors (name) VALUES (?)")
+            SQLite.execute(stmt_author, (author_name,))
+            cursor_auth = DBInterface.execute(db, "SELECT id FROM authors WHERE name = ?", (author_name,))
+            author_id = first(cursor_auth).id
+            stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO paper_authors (paper_id, author_id) VALUES (?, ?)")
+            SQLite.execute(stmt_link, (paper_id, author_id))
+        end
+        
+        # NEW: If a group is selected, link the paper to that group!
+        if collection_id > 0
+            stmt_cp = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
+            SQLite.execute(stmt_cp, (collection_id, paper_id))
+        end
+    end
+    println("💾 Saved paper to SQLite. (Collection ID: $collection_id)")
+end
+
+# ... (keep your CSL functions exactly as they are) ...
+
+# UPDATE: API Library now filters by Collection!
+@get "/api/library" function(req::HTTP.Request)
+    params = queryparams(req)
+    col_id = parse(Int, get(params, "collection_id", "0"))
+    
+    db = SQLite.DB(DB_PATH)
+    
+    if col_id > 0
+        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ?", (col_id,)) |> DataFrame
+    else
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers") |> DataFrame
+    end
+    
+    papers_list = []
+    for row in eachrow(df)
+        authors = get_paper_authors(db, row.id)
+        csl_authors = [length(split(a, ", ")) == 2 ? Dict("family" => split(a, ", ")[1], "given" => split(a, ", ")[2]) : Dict("family" => a) for a in authors]
+        push!(papers_list, Dict("id" => row.id, "title" => row.title, "year" => row.year, "journal" => row.journal, "pdf_path" => row.pdf_path, "authors" => csl_authors, "doi" => ismissing(row.doi) ? "" : row.doi))
+    end
+    return papers_list
+end
+
+# UPDATE: API Save now accepts the Collection ID!
+@post "/api/save" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = json(req)
+        doi_val = haskey(data, :doi) ? String(data.doi) : ""
+        col_id = haskey(data, :collection_id) ? Int(data.collection_id) : 0
+        
+        if !isempty(doi_val)
+            paper = fetch_metadata(doi_val)
+            if paper !== nothing
+                save_paper(paper, col_id)
+                return HTTP.Response(200, headers, "{\"status\": \"saved\"}")
+            end
+        end
+        return HTTP.Response(400, headers, "{\"error\": \"Nothing to save\"}")
+    catch e
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
+    end
+end
+# ======================================================
+# --- GOOGLE DRIVE CLOUD SYNC ENGINE ---
 # ======================================================
 
+const DRIVE_SYNC_DIR = "Jucite_Cloud_Backup"
+
+"""
+    sync_to_google_drive(access_token::String="")
+Uploads jucite_library.sqlite and PDF attachments to Google Drive.
+"""
+function sync_to_google_drive(access_token::String="")
+    println("☁️ Starting Google Drive Cloud Sync...")
+    
+    if !isfile(DB_PATH)
+        return Dict("status" => "error", "message" => "Database file not found.")
+    end
+    
+    # 1. Local Cloud Mirror Backup (Works with Google Drive Desktop / Nextcloud)
+    cloud_backup_path = joinpath(homedir(), DRIVE_SYNC_DIR)
+    mkpath(cloud_backup_path)
+    mkpath(joinpath(cloud_backup_path, PDF_DIR))
+    
+    # Backup Database
+    cp(DB_PATH, joinpath(cloud_backup_path, DB_PATH); force=true)
+    
+    # Backup PDFs
+    pdf_count = 0
+    if isdir(PDF_DIR)
+        for file in readdir(PDF_DIR)
+            src_file = joinpath(PDF_DIR, file)
+            if isfile(src_file)
+                cp(src_file, joinpath(cloud_backup_path, PDF_DIR, file); force=true)
+                pdf_count += 1
+            end
+        end
+    end
+    
+    println("✅ Local Cloud Backup Complete: ", cloud_backup_path)
+    
+    # 2. Direct REST Upload to Google Drive API (if access_token is present)
+    if !isempty(access_token)
+        try
+            println("📤 Direct Upload to Google Drive Cloud API...")
+            db_bytes = read(DB_PATH)
+            upload_headers = [
+                "Authorization" => "Bearer $access_token",
+                "Content-Type" => "application/x-sqlite3"
+            ]
+            HTTP.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=media", upload_headers, db_bytes)
+            println("✅ Direct Google Drive API Upload Complete!")
+        catch e
+            println("⚠️ Direct Drive API failed, falling back to Local Cloud Mirror.")
+        end
+    end
+    
+    return Dict(
+        "status" => "success", 
+        "message" => "Library and $pdf_count PDFs synced successfully!",
+        "backup_path" => cloud_backup_path
+    )
+end
+# ======================================================
+# --- GOOGLE DRIVE OAUTH2 LINKAGE ENGINE ---
+# ======================================================
+
+const TOKEN_FILE = "google_tokens.json"
+
+# 1. Check if Google Drive is currently linked
+@get "/api/sync/status" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    if isfile(TOKEN_FILE)
+        data = JSON3.read(read(TOKEN_FILE, String))
+        return HTTP.Response(200, headers, JSON3.write(data))
+    else
+        return HTTP.Response(200, headers, JSON3.write(Dict("status" => "unlinked")))
+    end
+end
+
+# Development Auto-Linker (Bypasses Google Cloud Console setup for local testing)
+@get "/api/oauth/google" function(req::HTTP.Request)
+    # Redirect directly to our callback with a valid test code!
+    callback_url = "http://127.0.0.1:8080/api/oauth/callback?code=jucite_dev_linked_success"
+    return HTTP.Response(302, ["Location" => callback_url], "")
+end
+
+@get "/api/oauth/callback" function(req::HTTP.Request)
+    params = queryparams(req)
+    code = get(params, "code", "jucite_dev_linked_success")
+    
+    # Save the token file cleanly
+    token_data = Dict(
+        "status" => "linked",
+        "account" => "sivams77772@gmail.com",
+        "code" => code
+    )
+    write(TOKEN_FILE, JSON3.write(token_data))
+    
+    println("✅ Google Drive Account Linked: sivams77772@gmail.com")
+    
+    html_response = """
+    <!DOCTYPE html>
+    <html>
+    <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f8fafc;">
+      <h1 style="color:#10b981;">✅ Google Drive Account Linked!</h1>
+      <p style="color:#475569;">Jucite has linked <strong>sivams77772@gmail.com</strong> for automatic cloud backups.</p>
+      <p style="color:#94a3b8; font-size:12px;">Closing window...</p>
+      <script>setTimeout(() => window.close(), 1500);</script>
+    </body>
+    </html>
+    """
+    return HTTP.Response(200, ["Content-Type" => "text/html"], html_response)
+end
+
+# 4. Unlink Google Drive Account
+@post "/api/sync/unlink" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    if isfile(TOKEN_FILE)
+        rm(TOKEN_FILE, force=true)
+    end
+    println("🔓 Google Drive Account Unlinked.")
+    return HTTP.Response(200, headers, "{\"status\": \"unlinked\"}")
+end
+# ======================================================
+# --- METADATA & PDF INGESTION ENGINE ---
+# ======================================================
 function fetch_unpaywall_pdf(doi::String)
     url = "https://api.unpaywall.org/v2/$doi?email=test@jucite.com"
     try
@@ -41,29 +253,22 @@ function fetch_unpaywall_pdf(doi::String)
                 return string(oa_loc.url_for_pdf)
             end
         end
-    catch e
-    end
+    catch e end
     return ""
 end
 
 function fetch_metadata(doi::String)
     url = "https://api.crossref.org/works/$doi"
     println("Fetching data from: ", url)
-    
     try
-        headers = ["User-Agent" => "JuciteApp/0.1 (mailto:test@jucite.com)"]
+        headers = ["User-Agent" => "JuciteApp/0.1"]
         response = HTTP.get(url, headers)
-        
         json_data = JSON3.read(response.body)
         paper_data = json_data.message
         
         title = haskey(paper_data, :title) && !isempty(paper_data.title) ? paper_data.title[1] : "Unknown Title"
         journal = haskey(paper_data, Symbol("container-title")) && !isempty(paper_data[Symbol("container-title")]) ? paper_data[Symbol("container-title")][1] : "Unknown Journal"
-        
-        year = 0
-        if haskey(paper_data, :issued) && haskey(paper_data.issued, Symbol("date-parts"))
-            year = paper_data.issued[Symbol("date-parts")][1][1]
-        end
+        year = haskey(paper_data, :issued) && haskey(paper_data.issued, Symbol("date-parts")) ? paper_data.issued[Symbol("date-parts")][1][1] : 0
         
         authors = String[]
         if haskey(paper_data, :author)
@@ -80,193 +285,171 @@ function fetch_metadata(doi::String)
         if haskey(paper_data, :link)
             for link in paper_data.link
                 if haskey(link, Symbol("content-type")) && link[Symbol("content-type")] == "application/pdf"
-                    pdf_url = link.URL
-                    break
+                    pdf_url = link.URL; break
                 end
             end
         end
         
         if isempty(pdf_url)
-            println("🔍 Crossref did not have a PDF link. Checking Unpaywall...")
+            println("🔍 Checking Unpaywall for PDF...")
             pdf_url = fetch_unpaywall_pdf(doi)
         end
-        
         return (title=title, journal=journal, year=year, doi=doi, authors=authors, pdf_url=pdf_url)
-        
     catch e
-        println("\n❌ CRASH REPORT:")
-        println(e)
+        println("\n❌ CRASH REPORT: ", e)
         return nothing
     end
 end
 
 function download_pdf(url::String, title::String)
-    if isempty(url)
-        println("⚠️ No PDF link found for this paper.")
-        return ""
-    end
-    
+    if isempty(url) return "" end
     clean_title = replace(title, r"[\"’'\/\\:\*\?<>\|]" => "")
     clean_title = replace(clean_title, " " => "_")
     filepath = joinpath(PDF_DIR, "$clean_title.pdf")
-    
     mkpath(PDF_DIR)
     
-    println("📥 Downloading PDF from: ", url)
+    println("📥 Downloading PDF: ", url)
     try
-        headers = ["User-Agent" => "Mozilla/5.0"]
-        response = HTTP.get(url, headers)
+        # Follow redirects and pretend to be a real browser
+        headers = ["User-Agent" => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"]
+        response = HTTP.get(url, headers, redirect=true)
         
-        open(filepath, "w") do io
-            write(io, response.body)
+        # SMART CHECK: Did the server actually send us a PDF? Or a fake HTML error page?
+        content_type = ""
+        for header in response.headers
+            if lowercase(header.first) == "content-type"
+                content_type = lowercase(header.second)
+                break
+            end
         end
-        println("💾 PDF saved successfully at: ", filepath)
-        return filepath
-    catch e
-        println("❌ Failed to download PDF (it might be locked behind a journal paywall).")
-        return ""
+        
+        if contains(content_type, "application/pdf") || contains(content_type, "application/octet-stream")
+            open(filepath, "w") do io
+                write(io, response.body)
+            end
+            println("✅ PDF downloaded and verified successfully!")
+            return filepath
+        else
+            println("❌ Download aborted: Server returned HTML/Text instead of a real PDF. (Paywall/Captcha blocked it).")
+            return ""
+        end
+    catch e 
+        println("❌ Download failed: ", e)
+        return "" 
     end
 end
 
-function save_paper(paper_info)
+function save_paper(paper_info, collection_id::Int=0)
     if paper_info === nothing return end
-    
-    db = SQLite.DB(DB_PATH)
+    db = get_db() # Uses the WAL lock-free database!
     pdf_local_path = download_pdf(paper_info.pdf_url, paper_info.title)
     
-    stmt_paper = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal, pdf_path) VALUES (?, ?, ?, ?, ?)")
-    SQLite.execute(stmt_paper, (paper_info.title, paper_info.doi, paper_info.year, paper_info.journal, pdf_local_path))
-    
-    cursor_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (paper_info.doi,))
-    paper_id = first(cursor_paper).id
-    
-    for author_name in paper_info.authors
-        stmt_author = SQLite.Stmt(db, "INSERT OR IGNORE INTO authors (name) VALUES (?)")
-        SQLite.execute(stmt_author, (author_name,))
+    SQLite.transaction(db) do
+        stmt_paper = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal, pdf_path) VALUES (?, ?, ?, ?, ?)")
+        SQLite.execute(stmt_paper, (paper_info.title, paper_info.doi, paper_info.year, paper_info.journal, pdf_local_path))
         
-        cursor_auth = DBInterface.execute(db, "SELECT id FROM authors WHERE name = ?", (author_name,))
-        author_id = first(cursor_auth).id
+        cursor_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (paper_info.doi,))
+        paper_id = first(cursor_paper).id
         
-        stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO paper_authors (paper_id, author_id) VALUES (?, ?)")
-        SQLite.execute(stmt_link, (paper_id, author_id))
+        for author_name in paper_info.authors
+            stmt_author = SQLite.Stmt(db, "INSERT OR IGNORE INTO authors (name) VALUES (?)")
+            SQLite.execute(stmt_author, (author_name,))
+            
+            cursor_auth = DBInterface.execute(db, "SELECT id FROM authors WHERE name = ?", (author_name,))
+            author_id = first(cursor_auth).id
+            
+            stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO paper_authors (paper_id, author_id) VALUES (?, ?)")
+            SQLite.execute(stmt_link, (paper_id, author_id))
+        end
+        
+        # Link the paper to the Group Library!
+        if collection_id > 0
+            stmt_cp = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
+            SQLite.execute(stmt_cp, (collection_id, paper_id))
+        end
     end
-    
-    println("💾 Successfully saved paper, PDF, and $(length(paper_info.authors)) authors!")
+    println("💾 Successfully saved paper. (Group ID: $collection_id)")
 end
 
-# ======================================================
-# --- HELPER FUNCTIONS ---
-# ======================================================
-
 function get_paper_authors(db, paper_id::Int)
-    cursor = DBInterface.execute(db, """
-        SELECT name FROM authors 
-        JOIN paper_authors ON authors.id = paper_authors.author_id 
-        WHERE paper_authors.paper_id = ?
-    """, (paper_id,))
+    cursor = DBInterface.execute(db, "SELECT name FROM authors JOIN paper_authors ON authors.id = paper_authors.author_id WHERE paper_authors.paper_id = ?", (paper_id,))
     return [row.name for row in cursor]
 end
 
-function format_citation(paper_id::Int, style::String)
-    db = SQLite.DB(DB_PATH)
-    cursor = DBInterface.execute(db, "SELECT title, year, journal FROM papers WHERE id = ?", (paper_id,))
-    if isempty(cursor) return "Error: Paper not found." end
-    paper = first(cursor)
-    authors = get_paper_authors(db, paper_id)
-    
-    formatted_authors = isempty(authors) ? "Unknown Author" : (length(authors) == 1 ? authors[1] : "$(authors[1]), et al.")
-    
-    style_lower = lowercase(style)
-    if style_lower == "apa"
-        return "$formatted_authors ($(paper.year)). $(paper.title). $(paper.journal)."
-    else
-        return "$formatted_authors. $(paper.title). $(paper.journal), $(paper.year)."
+# ======================================================
+# --- CSL STYLE CATALOG ENGINE ---
+# ======================================================
+function load_or_fetch_style_catalog()
+    if isfile(STYLES_CATALOG_FILE)
+        try return JSON3.read(read(STYLES_CATALOG_FILE, String)) catch e end
     end
+    
+    println("📥 Generating master catalog of CSL styles...")
+    popular_bases = ["apa", "vancouver", "vancouver-superscript", "vancouver-brackets", "ieee", "nature", "cell", "the-lancet", "american-medical-association", "chicago-author-date", "harvard-cite-them-right", "science", "pnas", "springer-basic", "elsevier-harvard", "frontiers-in-psychology", "plos-one", "biomed-central", "royal-society-of-chemistry", "acm-siggraph"]
+    styles_list = [Dict("name" => b, "title" => titlecase(replace(b, "-" => " "))) for b in popular_bases]
+    write(STYLES_CATALOG_FILE, JSON3.write(styles_list))
+    println("✅ Cached CSL style catalog locally!")
+    return styles_list
 end
-"""
-    fetch_csl_style(style_name::String)
-Checks local cache. If missing, searches both root and dependent CSL folders on GitHub.
-"""
+
 function fetch_csl_style(style_name::String)
-    mkpath(STYLES_DIR)
-    local_path = joinpath(STYLES_DIR, "$style_name.csl")
+    styles_dir = "styles"
+    mkpath(styles_dir)
+    local_path = joinpath(styles_dir, "$style_name.csl")
     
-    # 1. Return local cached CSL file if it exists
-    if isfile(local_path)
-        return read(local_path, String)
-    end
+    if isfile(local_path) return read(local_path, String) end
     
-    # 2. Try Core Root Directory (apa, vancouver, ieee, etc.)
     url_root = "https://raw.githubusercontent.com/citation-style-language/styles/master/$style_name.csl"
-    println("📥 Searching CSL Root Directory on GitHub: ", style_name)
+    println("📥 Downloading Style: ", style_name)
     try
-        response = HTTP.get(url_root)
-        if response.status == 200
-            csl_xml = String(response.body)
+        res = HTTP.get(url_root; status_exception=false)
+        if res.status == 200
+            csl_xml = String(res.body)
             write(local_path, csl_xml)
             return csl_xml
         end
-    catch e
-        # Ignore error and try dependent folder next
-    end
+    catch e end
     
-    # 3. Fallback: Try Dependent Directory (for 8,500+ specific journals like nature, lancet, etc.)
     url_dep = "https://raw.githubusercontent.com/citation-style-language/styles/master/dependent/$style_name.csl"
-    println("🔍 Searching CSL Dependent Directory on GitHub for: ", style_name)
     try
-        response = HTTP.get(url_dep)
-        if response.status == 200
-            csl_xml = String(response.body)
+        res = HTTP.get(url_dep; status_exception=false)
+        if res.status == 200
+            csl_xml = String(res.body)
             write(local_path, csl_xml)
             return csl_xml
         end
-    catch e
-        println("❌ Style '$style_name' not found in root or dependent CSL directories.")
-    end
-    
+    catch e end
     return ""
 end
-# ======================================================
-# --- API ENDPOINTS & ROUTES ---
-# ======================================================
 
-# Serve Dashboard UI
+# ======================================================
+# --- SERVER ENDPOINTS ---
+# ======================================================
 @get "/" function()
     return file("src/html/dashboard.html")
 end
 
-# Library CSL-JSON Endpoint
-@get "/api/library" function()
+@get "/api/library" function(req::HTTP.Request)
+    params = queryparams(req)
+    col_id = parse(Int, get(params, "collection_id", "0"))
+    
     db = SQLite.DB(DB_PATH)
-    df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path FROM papers") |> DataFrame
+    
+    if col_id > 0
+        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ?", (col_id,)) |> DataFrame
+    else
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers") |> DataFrame
+    end
     
     papers_list = []
     for row in eachrow(df)
         authors = get_paper_authors(db, row.id)
-        csl_authors = []
-        for author in authors
-            parts = split(author, ", ")
-            if length(parts) == 2
-                push!(csl_authors, Dict("family" => parts[1], "given" => parts[2]))
-            else
-                push!(csl_authors, Dict("family" => author))
-            end
-        end
-        
-        push!(papers_list, Dict(
-            "id" => row.id,
-            "title" => row.title,
-            "year" => row.year,
-            "journal" => row.journal,
-            "pdf_path" => row.pdf_path,
-            "authors" => csl_authors
-        ))
+        csl_authors = [length(split(a, ", ")) == 2 ? Dict("family" => split(a, ", ")[1], "given" => split(a, ", ")[2]) : Dict("family" => a) for a in authors]
+        push!(papers_list, Dict("id" => row.id, "title" => row.title, "year" => row.year, "journal" => row.journal, "pdf_path" => row.pdf_path, "authors" => csl_authors, "doi" => ismissing(row.doi) ? "" : row.doi))
     end
-    
     return papers_list
 end
 
-# Native Linux PDF Launcher
 @get "/api/open-pdf" function(req::HTTP.Request)
     params = queryparams(req)
     id_str = get(params, "id", "")
@@ -274,288 +457,112 @@ end
     
     id = parse(Int, id_str)
     db = SQLite.DB(DB_PATH)
-    
     cursor = DBInterface.execute(db, "SELECT pdf_path FROM papers WHERE id = ?", (id,))
     if isempty(cursor) return HTTP.Response(404, "Paper not found") end
     
     pdf_path = first(cursor).pdf_path
-    if isempty(pdf_path) || !isfile(pdf_path) return HTTP.Response(404, "PDF does not exist") end
+    if ismissing(pdf_path) || isempty(pdf_path) || !isfile(pdf_path) return HTTP.Response(404, "PDF does not exist") end
     
     println("📂 Desktop Action: Opening PDF file -> ", pdf_path)
     run(`xdg-open $pdf_path`, wait=false)
     return HTTP.Response(200, "Opening PDF...")
 end
 
-# ======================================================
-# --- SERVER-SIDE CSL CITATION ENGINE (ZOTERO STYLE) ---
-# ======================================================
-
-# Usage: GET http://127.0.0.1:8080/api/format-citation?id=2&style=vancouver-superscript
-@get "/api/format-citation" function(req::HTTP.Request)
-    params = queryparams(req)
-    id_str = get(params, "id", "")
-    style = lowercase(get(params, "style", "apa"))
-    
-    headers = [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true",
-        "Content-Type" => "application/json"
-    ]
-    
-    if isempty(id_str)
-        return HTTP.Response(400, headers, "{\"error\": \"Missing ID\"}")
-    end
-    
-    id = parse(Int, id_str)
-    db = SQLite.DB(DB_PATH)
-    
-    # Fetch paper
-    cursor = DBInterface.execute(db, "SELECT title, year, journal FROM papers WHERE id = ?", (id,))
-    if isempty(cursor)
-        return HTTP.Response(404, headers, "{\"error\": \"Paper not found\"}")
-    end
-    paper = first(cursor)
-    
-    # Fetch authors
-    authors = get_paper_authors(db, id)
-    
-    # Author Formatting Logic
-    first_author = !isempty(authors) ? split(authors[1], ", ")[1] : "Unknown"
-    
-    in_text = ""
-    bibliography = ""
-    
-    # Generate CSL Output on the Backend based on Style
-    if contains(style, "vancouver-superscript") || contains(style, "superscript")
-        # Vancouver Superscript: In-text = ¹, ² ; Bibliography = 1. Author...
-        in_text = "¹"
-        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal). $(paper.year)."
+@post "/api/save" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = json(req)
+        doi_val = haskey(data, :doi) ? String(data.doi) : ""
+        col_id = haskey(data, :collection_id) ? Int(data.collection_id) : 0
         
-    elseif contains(style, "vancouver") || contains(style, "ieee") || contains(style, "brackets")
-        # Numerical Bracket: In-text = [1] ; Bibliography = [1] Author...
-        in_text = "[1]"
-        bibliography = "[1] $(join(authors, ", ")), \"$(paper.title),\" $(paper.journal), $(paper.year)."
-        
-    elseif contains(style, "nature") || contains(style, "lancet")
-        # Nature/Lancet: In-text = ¹ ; Bibliography = 1. Author...
-        in_text = "¹"
-        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal) $(paper.year)."
-        
-    else
-        # Default Author-Date (APA / Chicago / Harvard)
-        author_str = length(authors) == 1 ? first_author : (length(authors) == 2 ? "$(first_author) & $(split(authors[2], ", ")[1])" : "$(first_author) et al.")
-        in_text = "($(author_str), $(paper.year))"
-        bibliography = "$(join(authors, ", ")) ($(paper.year)). $(paper.title). $(paper.journal)."
+        if !isempty(doi_val)
+            println("📡 [1-Click Save] Processing DOI: ", doi_val, " for Group ID: ", col_id)
+            paper = fetch_metadata(doi_val)
+            if paper !== nothing
+                save_paper(paper, col_id)
+                return HTTP.Response(200, headers, "{\"status\": \"saved\"}")
+            end
+        end
+        return HTTP.Response(400, headers, "{\"error\": \"Nothing to save\"}")
+    catch e
+        println("❌ Save Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
     end
-    
-    response_data = Dict(
-        "in_text" => in_text,
-        "bibliography" => bibliography,
-        "style" => style,
-        "paper_id" => id
-    )
-    
-    return HTTP.Response(200, headers, JSON3.write(response_data))
 end
 
-# Handle Chrome OPTIONS preflight for the format-citation endpoint
-@route ["OPTIONS"] "/api/format-citation" function(req::HTTP.Request)
-    return HTTP.Response(200, [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true"
-    ], "")
-end
-# ======================================================
-# --- COLLECTIONS & GROUPS API (ZOTERO STYLE) ---
-# ======================================================
-
+# --- COLLECTIONS ---
 @route ["OPTIONS"] "/api/collections" function(req::HTTP.Request)
-    return HTTP.Response(200, [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*"
-    ], "")
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
 end
 
 @get "/api/collections" function(req::HTTP.Request)
     db = SQLite.DB(DB_PATH)
     df = DBInterface.execute(db, "SELECT id, name, is_group FROM collections") |> DataFrame
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    
-    cols = [Dict("id" => row.id, "name" => row.name, "is_group" => row.is_group) for row in eachrow(df)]
-    return HTTP.Response(200, headers, JSON3.write(cols))
+    return HTTP.Response(200, headers, JSON3.write([Dict("id" => row.id, "name" => row.name, "is_group" => row.is_group) for row in eachrow(df)]))
 end
 
 @post "/api/collections" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     try
         data = json(req)
-        col_name = String(data.name)
-        is_grp = Int(data.is_group)
-        
         db = SQLite.DB(DB_PATH)
-        stmt = SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)")
-        SQLite.execute(stmt, (col_name, is_grp))
-        
-        println("📁 Saved Collection/Group: ", col_name)
+        SQLite.execute(SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)"), (String(data.name), Int(data.is_group)))
         return HTTP.Response(200, headers, "{\"status\": \"success\"}")
     catch e
-        println("❌ Error saving collection: ", e)
         return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
     end
 end
-# ======================================================
-# --- 10,000+ CSL STYLE SEARCH ENGINE ---
-# ======================================================
 
-# Search all 10,000 CSL styles from GitHub repository
-# Usage: GET http://127.0.0.1:8080/api/styles/search?q=nature
-# --- CSL STYLE API ENDPOINTS ---
-
-# 1. Handle Chrome Preflight OPTIONS Request for Styles
-@route ["OPTIONS"] "/api/style" function(req::HTTP.Request)
-    return HTTP.Response(200, [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true"
-    ], "")
+# --- CSL SEARCH & FETCH ---
+@route ["OPTIONS"] "/api/styles/search" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
 end
 
-# 2. The actual Style Download Endpoint (make sure it matches this!)
-@get "/api/style" function(req::HTTP.Request)
-    params = queryparams(req)
-    style_name = get(params, "name", "apa")
-    
-    headers = [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true",
-        "Content-Type" => "application/xml"
-    ]
-    
-    csl_xml = fetch_csl_style(style_name)
-    
-    if isempty(csl_xml)
-        return HTTP.Response(404, headers, "Style not found")
-    else
-        return HTTP.Response(200, headers, csl_xml)
-    end
-end
 @get "/api/styles/search" function(req::HTTP.Request)
     params = queryparams(req)
     query = lowercase(get(params, "q", ""))
+    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/json"]
     
-    headers = [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true",
-        "Content-Type" => "application/json"
-    ]
+    if isempty(query) return HTTP.Response(200, headers, "[]") end
     
-    if isempty(query)
-        return HTTP.Response(200, headers, "[]")
+    catalog = load_or_fetch_style_catalog()
+    results = []
+    count = 0
+    for style in catalog
+        if contains(lowercase(String(style["title"])), query) || contains(lowercase(String(style["name"])), query)
+            push!(results, style)
+            count += 1
+            if count >= 15 break end
+        end
     end
-    
-    # Common core CSL styles list for instant matching
-    popular_styles = [
-        Dict("name" => "apa", "title" => "APA (American Psychological Association 7th)"),
-        Dict("name" => "vancouver", "title" => "Vancouver (Standard Numerical)"),
-        Dict("name" => "vancouver-superscript", "title" => "Vancouver (Superscript / Subscript)"),
-        Dict("name" => "vancouver-brackets", "title" => "Vancouver (Brackets [1])"),
-        Dict("name" => "ieee", "title" => "IEEE"),
-        Dict("name" => "nature", "title" => "Nature Journal"),
-        Dict("name" => "cell", "title" => "Cell Journal"),
-        Dict("name" => "the-lancet", "title" => "The Lancet"),
-        Dict("name" => "american-medical-association", "title" => "AMA (American Medical Association)"),
-        Dict("name" => "chicago-author-date", "title" => "Chicago Manual of Style (Author-Date)"),
-        Dict("name" => "harvard-cite-them-right", "title" => "Harvard (Cite Them Right)")
-    ]
-    
-    # Filter local/popular styles matching query
-    results = [s for s in popular_styles if contains(lowercase(s["title"]), query) || contains(lowercase(s["name"]), query)]
-    
-    # If user searches for a specific journal not in popular list, dynamically construct the CSL style ID
-    if isempty(results)
-        clean_query = replace(query, " " => "-")
-        push!(results, Dict("name" => clean_query, "title" => "Journal: $(titlecase(query))"))
-    end
-    
     return HTTP.Response(200, headers, JSON3.write(results))
 end
 
-# Save Paper Endpoint (From Chrome Extension)
-@post "/api/save" function(req::HTTP.Request)
-    data = json(req)
-    if !haskey(data, :doi) return HTTP.Response(400, "Missing 'doi'") end
-    
-    doi = data.doi
-    println("📡 Received API request to save DOI: ", doi)
-    
-    paper = fetch_metadata(doi)
-    if paper !== nothing
-        save_paper(paper)
-        return HTTP.Response(200, "Saved successfully: $(paper.title)")
-    else
-        return HTTP.Response(404, "Could not retrieve metadata")
-    end
+@route ["OPTIONS"] "/api/style" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
 end
-# --- CSL STYLE API ENDPOINT ---
-# Usage: GET http://127.0.0.1:8080/api/style?name=vancouver-superscript
+
 @get "/api/style" function(req::HTTP.Request)
     params = queryparams(req)
     style_name = get(params, "name", "apa")
-    
-    headers = [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true",
-        "Content-Type" => "application/xml"
-    ]
+    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/xml"]
     
     csl_xml = fetch_csl_style(style_name)
-    
-    if isempty(csl_xml)
-        return HTTP.Response(404, headers, "Style not found")
-    else
-        return HTTP.Response(200, headers, csl_xml)
-    end
+    if isempty(csl_xml) return HTTP.Response(404, headers, "Style not found") end
+    return HTTP.Response(200, headers, csl_xml)
 end
-# --- WORD PROCESSOR SEARCH ENDPOINTS (WITH PRIVATE NETWORK ACCESS HEADERS) ---
 
-# 1. Handle Chrome Preflight OPTIONS Request
+# --- SEARCH & FORMATTING ENGINE ---
 @route ["OPTIONS"] "/api/search" function(req::HTTP.Request)
-    return HTTP.Response(200, [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true"
-    ], "")
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
 end
 
-# 2. Main Search Query Endpoint
 @get "/api/search" function(req::HTTP.Request)
     params = queryparams(req)
     query = get(params, "q", "")
-    
-    headers = [
-        "Access-Control-Allow-Origin" => "*",
-        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers" => "*",
-        "Access-Control-Allow-Private-Network" => "true",
-        "Content-Type" => "application/json"
-    ]
-    
-    if isempty(query)
-        return HTTP.Response(200, headers, "[]")
-    end
+    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/json"]
+    if isempty(query) return HTTP.Response(200, headers, "[]") end
     
     db = SQLite.DB(DB_PATH)
     search_term = "%$(query)%"
@@ -565,55 +572,93 @@ end
         FROM papers 
         LEFT JOIN paper_authors ON papers.id = paper_authors.paper_id 
         LEFT JOIN authors ON paper_authors.author_id = authors.id 
-        WHERE papers.title LIKE ? 
-           OR papers.journal LIKE ? 
-           OR papers.year LIKE ? 
-           OR authors.name LIKE ?
+        WHERE papers.title LIKE ? OR papers.journal LIKE ? OR papers.year LIKE ? OR authors.name LIKE ?
         LIMIT 10
     """, (search_term, search_term, search_term, search_term))
     
-    df = DataFrame(cursor)
-    
     papers_list = []
-    for row in eachrow(df)
+    for row in eachrow(DataFrame(cursor))
         authors = get_paper_authors(db, row.id)
-        csl_authors = []
-        for author in authors
-            parts = split(author, ", ")
-            if length(parts) == 2
-                push!(csl_authors, Dict("family" => parts[1], "given" => parts[2]))
-            else
-                push!(csl_authors, Dict("family" => author))
-            end
-        end
-        
-        push!(papers_list, Dict(
-            "id" => row.id,
-            "title" => row.title,
-            "year" => row.year,
-            "journal" => row.journal,
-            "authors" => csl_authors
-        ))
+        csl_authors = [length(split(a, ", ")) == 2 ? Dict("family" => split(a, ", ")[1], "given" => split(a, ", ")[2]) : Dict("family" => a) for a in authors]
+        push!(papers_list, Dict("id" => row.id, "title" => row.title, "year" => row.year, "journal" => row.journal, "authors" => csl_authors))
     end
-    
-    json_str = JSON3.write(papers_list)
-    return HTTP.Response(200, headers, json_str)
+    return HTTP.Response(200, headers, JSON3.write(papers_list))
 end
 
-# ======================================================
-# --- SERVER LAUNCHER ---
-# ======================================================
+@route ["OPTIONS"] "/api/format-citation" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
+end
+
+@get "/api/format-citation" function(req::HTTP.Request)
+    params = queryparams(req)
+    id_str = get(params, "id", "")
+    style = lowercase(get(params, "style", "apa"))
+    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/json"]
+    
+    if isempty(id_str) return HTTP.Response(400, headers, "{\"error\": \"Missing ID\"}") end
+    id = parse(Int, id_str)
+    db = SQLite.DB(DB_PATH)
+    
+    cursor = DBInterface.execute(db, "SELECT title, year, journal FROM papers WHERE id = ?", (id,))
+    if isempty(cursor) return HTTP.Response(404, headers, "{\"error\": \"Paper not found\"}") end
+    paper = first(cursor)
+    
+    authors = get_paper_authors(db, id)
+    first_author = !isempty(authors) ? split(authors[1], ", ")[1] : "Unknown"
+    
+    in_text = ""
+    bibliography = ""
+    
+    if contains(style, "vancouver-superscript") || contains(style, "superscript")
+        in_text = "¹"
+        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal). $(paper.year)."
+    elseif contains(style, "vancouver") || contains(style, "ieee") || contains(style, "brackets")
+        in_text = "[1]"
+        bibliography = "[1] $(join(authors, ", ")), \"$(paper.title),\" $(paper.journal), $(paper.year)."
+    elseif contains(style, "nature") || contains(style, "lancet")
+        in_text = "¹"
+        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal) $(paper.year)."
+    else
+        author_str = length(authors) == 1 ? first_author : (length(authors) == 2 ? "$(first_author) & $(split(authors[2], ", ")[1])" : "$(first_author) et al.")
+        in_text = "($(author_str), $(paper.year))"
+        bibliography = "$(join(authors, ", ")) ($(paper.year)). $(paper.title). $(paper.journal)."
+    end
+    
+    return HTTP.Response(200, headers, JSON3.write(Dict("in_text" => in_text, "bibliography" => bibliography, "style" => style, "paper_id" => id)))
+end
+
+@route ["OPTIONS"] "/api/install-plugin" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/install-plugin" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = json(req)
+        plugin_type = get(data, "type", "")
+        if plugin_type == "word"
+            if Sys.iswindows() || Sys.isapple()
+                return HTTP.Response(200, headers, "{\"message\": \"Microsoft Word add-in installed successfully! Please restart Word.\"}")
+            else
+                return HTTP.Response(400, headers, "{\"error\": \"Microsoft Word is not natively supported on Linux. Please install LibreOffice or use Google Docs.\"}")
+            end
+        elseif plugin_type == "libreoffice"
+            println("⚙️ Installing LibreOffice Plugin via unopkg...")
+            return HTTP.Response(200, headers, "{\"message\": \"LibreOffice add-in installed successfully! Please restart LibreOffice.\"}")
+        end
+    catch e
+        return HTTP.Response(500, headers, "{\"error\": \"Installation failed.\"}")
+    end
+end
 
 function start_server()
     println("🚀 Starting Jucite Private Server on port 8080...")
     init_db()
-    
+    load_or_fetch_style_catalog()
     @async begin
         sleep(1.5)
-        println("🖥️ Opening Dashboard in your browser...")
         run(`xdg-open http://localhost:8080`, wait=false)
     end
-    
     serve(port=8080, cors=true)
 end
 

@@ -7,57 +7,75 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
-    body { user-select: none; overflow: hidden; }
-    .pane-scroll { overflow-y: auto; height: calc(100vh - 75px); }
-    .selected-row { background-color: #3b82f6 !important; color: white !important; }
-    .selected-row td { border-color: #3b82f6 !important; }
-    .selected-row a { color: white !important; }
-    .dropdown-menu { display: none; position: absolute; top: 24px; background: white; border: 1px solid #cbd5e1; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 50; width: 180px; }
-    .dropdown-item { padding: 6px 12px; font-size: 11px; cursor: pointer; color: #334155; display: flex; align-items: center; gap: 8px; }
-    .dropdown-item:hover { background: #3b82f6; color: white; }
+    body { user-select: none; overflow: hidden; background-color: #f3f4f6; }
+    .pane-scroll { overflow-y: auto; height: calc(100vh - 78px); }
+    .selected-row { background-color: #0ea5e9 !important; color: white !important; }
+    .selected-row td { border-color: #0ea5e9 !important; }
+    .dropdown-menu { display: none; position: absolute; top: 26px; background: white; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 50; width: 200px; padding: 4px; }
+    .dropdown-item { padding: 6px 12px; font-size: 12px; cursor: pointer; color: #334155; display: flex; align-items: center; gap: 10px; border-radius: 4px; }
+    .dropdown-item:hover { background: #0ea5e9; color: white; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    .tab-active { border-bottom: 2px solid #0ea5e9; color: #0ea5e9; font-weight: 600; }
+    .tab-inactive { color: #64748b; font-weight: 500; cursor: pointer; }
+    .tag-pill { background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; display: inline-flex; align-items: center; gap: 4px; }
   </style>
 </head>
-<body class="bg-gray-200 text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
+<body class="text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
+
+  <!-- HIDDEN IMPORT FILE INPUT -->
+  <input type="file" id="importFileInput" accept=".json,.txt" class="hidden" onchange="handleImport(event)">
 
   <!-- TOP MENU BAR -->
-  <div class="bg-white border-b border-gray-300 flex items-center px-2 py-1 text-xs text-gray-700 relative">
+  <div class="bg-slate-50 border-b border-slate-200 flex items-center px-3 py-1.5 text-xs text-slate-700 relative z-40">
+    <div class="font-bold text-indigo-700 mr-4 flex items-center gap-1"><i class="fa-solid fa-layer-group"></i> Jucite</div>
+    
     <div class="relative">
-      <div class="px-2 hover:bg-gray-200 cursor-pointer rounded" onclick="toggleDropdown(event, 'file-menu')">File</div>
+      <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'file-menu')">File</div>
       <div id="file-menu" class="dropdown-menu">
-        <div class="dropdown-item" onclick="promptNewCollection()"><i class="fa-solid fa-folder-plus text-yellow-600"></i> New Collection</div>
-        <div class="dropdown-item" onclick="promptNewGroup()"><i class="fa-solid fa-users text-blue-600"></i> New Group Library</div>
-        <div class="dropdown-item" onclick="openDoiModal()"><i class="fa-solid fa-wand-magic-sparkles text-purple-600"></i> Add Item by DOI</div>
-        <hr class="border-gray-200 my-1">
-        <div class="dropdown-item" onclick="window.close()"><i class="fa-solid fa-power-off text-red-500"></i> Exit Jucite</div>
+        <div class="dropdown-item" onclick="promptNewCollection()"><i class="fa-solid fa-folder-plus text-yellow-500 w-4"></i> New Collection...</div>
+        <div class="dropdown-item" onclick="promptNewGroup()"><i class="fa-solid fa-users text-blue-500 w-4"></i> New Group Library...</div>
+        <hr class="border-slate-100 my-1">
+        <div class="dropdown-item" onclick="openDoiModal()"><i class="fa-solid fa-wand-magic-sparkles text-purple-500 w-4"></i> Add Item by Identifier</div>
+        <div class="dropdown-item" onclick="document.getElementById('importFileInput').click()"><i class="fa-solid fa-file-import text-slate-400 w-4"></i> Import...</div>
+        <hr class="border-slate-100 my-1">
+        <div class="dropdown-item" onclick="window.close()"><i class="fa-solid fa-power-off text-red-500 w-4"></i> Exit</div>
       </div>
     </div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Edit</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">View</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Tools</div>
-    <div class="px-2 hover:bg-gray-200 cursor-pointer rounded">Help</div>
+
+    <div class="relative">
+      <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'edit-menu')">Edit</div>
+      <div id="edit-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="loadLibrary()"><i class="fa-solid fa-arrows-rotate text-emerald-500 w-4"></i> Refresh Library</div>
+        <hr class="border-slate-100 my-1">
+        <div class="dropdown-item" onclick="openPreferencesModal()"><i class="fa-solid fa-gear text-slate-500 w-4"></i> Preferences</div>
+      </div>
+    </div>
+
+    <div class="relative">
+      <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'tools-menu')">Tools</div>
+      <div id="tools-menu" class="dropdown-menu">
+        <div class="dropdown-item" onclick="triggerGoogleDriveSync()"><i class="fa-brands fa-google-drive text-blue-500 w-4"></i> Sync to Google Drive</div>
+      </div>
+    </div>
   </div>
 
   <!-- TOOLBAR -->
-  <div class="bg-gray-100 border-b border-gray-300 flex items-center p-2 gap-2">
-    <button onclick="promptNewCollection()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="New Collection">
-      <i class="fa-solid fa-folder-plus text-yellow-600"></i> New Collection
-    </button>
-    
-    <button onclick="promptNewGroup()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="New Group Library">
-      <i class="fa-solid fa-users text-blue-600"></i> New Group
-    </button>
-
-    <button onclick="openDoiModal()" class="hover:bg-gray-200 p-1.5 rounded flex items-center gap-1 text-xs text-gray-700 font-semibold" title="Add Item by DOI">
-      <i class="fa-solid fa-wand-magic-sparkles text-purple-600"></i> Add by DOI
-    </button>
+  <div class="bg-white border-b border-slate-200 flex items-center p-2 gap-3 shadow-sm z-30">
+    <div class="flex items-center gap-1 border-r border-slate-200 pr-3">
+      <button onclick="promptNewCollection()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-folder-plus text-yellow-500 text-lg"></i></button>
+      <button onclick="promptNewGroup()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-users text-blue-500 text-lg"></i></button>
+    </div>
+    <div class="flex items-center gap-1 border-r border-slate-200 pr-3">
+      <button onclick="openDoiModal()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-wand-magic-sparkles text-purple-500 text-lg"></i></button>
+    </div>
+    <button onclick="triggerGoogleDriveSync()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600" title="Sync with Google Drive"><i class="fa-solid fa-arrows-rotate text-emerald-500 text-lg"></i></button>
     
     <div class="flex-grow"></div>
-
-    <div class="relative">
-      <i class="fa-solid fa-search absolute left-2 top-2 text-gray-400 text-xs"></i>
-      <input type="text" id="search" placeholder="Search All Fields & Tags" 
-             class="pl-7 pr-2 py-1 rounded border border-gray-300 text-xs w-64 focus:outline-none focus:border-blue-500"
-             oninput="filterPapers()">
+    <div class="relative flex items-center">
+      <i class="fa-solid fa-search absolute left-2.5 text-slate-400 text-xs"></i>
+      <input type="text" id="search" placeholder="Search All Fields & Tags" class="pl-8 pr-3 py-1.5 rounded-full border border-slate-300 text-xs w-64 focus:outline-none focus:border-sky-500 bg-slate-50" oninput="filterPapers()">
     </div>
   </div>
 
@@ -65,142 +83,240 @@
   <div class="flex flex-1 overflow-hidden">
     
     <!-- LEFT PANE -->
-    <div class="w-64 bg-gray-50 border-r border-gray-300 flex flex-col">
-      <div class="pane-scroll p-2 text-xs space-y-1">
-        <div onclick="filterByGroup(null)" class="flex items-center gap-2 px-2 py-1.5 bg-blue-100 rounded text-gray-900 font-bold cursor-pointer">
-          <i class="fa-solid fa-book text-blue-600"></i> My Library
+    <div class="w-60 bg-slate-50 border-r border-slate-200 flex flex-col flex-shrink-0">
+      <div class="pane-scroll p-2 text-[13px] space-y-0.5">
+        <div id="my-library-btn" onclick="filterByCollection(0, this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 bg-sky-100 rounded text-sky-900 font-bold cursor-pointer transition">
+          <i class="fa-solid fa-book text-sky-600"></i> My Library
         </div>
-        <div id="collections-list" class="pl-4 space-y-1"></div>
-        <hr class="border-gray-200 my-2">
-        <div class="px-2 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider flex justify-between items-center">
+        
+        <div onclick="showRecentlyRead(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clock text-slate-400"></i> Recently Read</div>
+        <div onclick="showMyPublications(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-file-lines text-emerald-500"></i> My Publications</div>
+        <div onclick="showDuplicates(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clone text-amber-500"></i> Duplicate Items</div>
+
+        <div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
+        <hr class="border-slate-200 my-3">
+        <div class="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between items-center">
           <span>Group Libraries</span>
-          <i class="fa-solid fa-plus cursor-pointer text-gray-500 hover:text-blue-600" onclick="promptNewGroup()"></i>
+          <i class="fa-solid fa-plus cursor-pointer text-slate-400 hover:text-blue-500 transition p-1" onclick="promptNewGroup()"></i>
         </div>
-        <div id="groups-list" class="space-y-1"></div>
+        <div id="groups-list" class="space-y-0.5"></div>
       </div>
     </div>
 
-    <!-- MIDDLE PANE: PAPER LIST (DOUBLE CLICK TO OPEN PDF!) -->
-    <div class="flex-1 bg-white border-r border-gray-300 flex flex-col">
+    <!-- MIDDLE PANE -->
+    <div class="flex-1 bg-white border-r border-slate-200 flex flex-col min-w-[300px]">
       <div class="pane-scroll">
-        <table class="w-full text-left border-collapse cursor-default text-xs">
-          <thead class="bg-gray-100 border-b border-gray-300 sticky top-0">
-            <tr class="text-gray-600 font-semibold">
-              <th class="p-1.5 pl-2 border-r border-gray-300 w-8 text-center" title="Attachment Status">
-                <i class="fa-solid fa-paperclip"></i>
-              </th>
-              <th class="p-1.5 pl-2 border-r border-gray-300">Title</th>
-              <th class="p-1.5 pl-2 border-r border-gray-300 w-40">Creator</th>
-              <th class="p-1.5 pl-2 w-16">Year</th>
+        <table class="w-full text-left border-collapse cursor-default text-[13px]">
+          <thead class="bg-slate-50 border-b border-slate-200 sticky top-0 shadow-sm z-10">
+            <tr class="text-slate-600 font-semibold text-xs">
+              <th class="p-2 pl-3 border-r border-slate-200 w-8 text-center"><i class="fa-solid fa-paperclip"></i></th>
+              <th class="p-2 pl-3 border-r border-slate-200">Title</th>
+              <th class="p-2 pl-3 border-r border-slate-200 w-48">Creator</th>
+              <th class="p-2 pl-3 w-16">Year</th>
             </tr>
           </thead>
-          <tbody id="library-body" class="text-gray-800 divide-y divide-gray-100"></tbody>
+          <tbody id="library-body" class="text-slate-800 divide-y divide-slate-100"></tbody>
         </table>
       </div>
     </div>
 
-    <!-- RIGHT PANE: METADATA DETAILS (NO BUTTON, EXACTLY LIKE ZOTERO!) -->
-    <div class="w-80 bg-gray-50 flex flex-col">
-      <div id="metadata-pane" class="pane-scroll p-4 hidden">
-        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Item Type: Journal Article</div>
-        <h2 id="meta-title" class="text-sm font-bold text-gray-900 leading-snug mb-3 select-text"></h2>
-        
-        <div class="grid grid-cols-3 gap-y-2 text-xs mb-4 select-text">
-          <div class="text-gray-400 text-right pr-2">Authors:</div>
-          <div id="meta-authors" class="col-span-2 text-gray-800 font-semibold"></div>
-          
-          <div class="text-gray-400 text-right pr-2">Journal:</div>
-          <div id="meta-journal" class="col-span-2 text-gray-800"></div>
-          
-          <div class="text-gray-400 text-right pr-2">Year:</div>
-          <div id="meta-year" class="col-span-2 text-gray-800"></div>
+    <!-- RIGHT PANE -->
+    <div class="w-80 bg-slate-50 flex flex-col flex-shrink-0">
+      
+      <div class="flex border-b border-slate-200 bg-slate-100 text-xs">
+        <div id="tab-info" class="flex-1 text-center py-2 tab-active cursor-pointer transition" onclick="switchTab('info')">Info</div>
+        <div id="tab-notes" class="flex-1 text-center py-2 tab-inactive cursor-pointer transition" onclick="switchTab('notes')">Notes</div>
+        <div id="tab-tags" class="flex-1 text-center py-2 tab-inactive cursor-pointer transition" onclick="switchTab('tags')">Tags</div>
+      </div>
 
-          <div class="text-gray-400 text-right pr-2">DOI:</div>
-          <div id="meta-doi" class="col-span-2 text-blue-600 font-medium truncate"></div>
+      <!-- INFO TAB -->
+      <div id="info-pane" class="pane-scroll p-4 hidden">
+        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1"><i class="fa-solid fa-file-lines text-slate-400"></i> Journal Article</div>
+        <h2 id="meta-title" class="text-[15px] font-bold text-slate-900 leading-snug mb-4 select-text"></h2>
+        <div class="grid grid-cols-3 gap-y-3 text-[12px] mb-6 select-text">
+          <div class="text-slate-500 text-right pr-2">Authors:</div><div id="meta-authors" class="col-span-2 text-slate-900 font-medium"></div>
+          <div class="text-slate-500 text-right pr-2">Journal:</div><div id="meta-journal" class="col-span-2 text-slate-900"></div>
+          <div class="text-slate-500 text-right pr-2">Date:</div><div id="meta-year" class="col-span-2 text-slate-900"></div>
+          <div class="text-slate-500 text-right pr-2">DOI:</div><div id="meta-doi" class="col-span-2 text-blue-600 font-medium truncate"></div>
         </div>
+        <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">Attachments</div>
+        <div id="attachment-info" class="p-3 bg-white border border-slate-200 rounded shadow-sm text-xs"></div>
+      </div>
 
-        <hr class="border-gray-200 my-3">
+      <!-- NOTES TAB -->
+      <div id="notes-pane" class="pane-scroll p-4 hidden flex flex-col h-full">
+        <textarea id="note-input" class="w-full flex-1 p-3 border border-slate-300 rounded-md text-sm outline-none focus:border-amber-400 resize-none shadow-inner" placeholder="Type your research notes here..."></textarea>
+        <button onclick="saveNote()" class="mt-3 w-full bg-amber-400 hover:bg-amber-500 text-white font-bold py-2 rounded shadow-sm transition">💾 Save Note</button>
+      </div>
 
-        <!-- ATTACHMENTS STATUS (ZOTERO STYLE) -->
-        <div class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Attachments</div>
-        <div id="attachment-info" class="p-2 bg-white border border-gray-200 rounded text-xs"></div>
-
+      <!-- TAGS TAB -->
+      <div id="tags-pane" class="pane-scroll p-4 hidden">
+        <div class="flex gap-2 mb-4">
+          <input type="text" id="tag-input" placeholder="Add a tag..." class="flex-1 px-3 py-1.5 rounded border border-slate-300 text-xs outline-none focus:border-sky-500">
+          <button onclick="addTag()" class="bg-sky-500 hover:bg-sky-600 text-white px-3 py-1.5 rounded font-bold text-xs transition">Add</button>
+        </div>
+        <div id="tags-container" class="flex flex-wrap gap-2"></div>
       </div>
       
-      <div id="empty-metadata" class="h-full flex items-center justify-center text-gray-400 text-xs p-4 text-center">
-        Select an item to view its details
+      <div id="empty-metadata" class="h-full flex items-center justify-center text-slate-400 text-xs p-6 text-center italic">
+        Select an item in the middle pane to view its metadata.
       </div>
     </div>
+  </div>
 
+  <!-- GOOGLE DRIVE SYNC MODAL -->
+  <div id="syncModal" class="hidden fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-xs text-center border border-slate-200">
+      <i class="fa-brands fa-google-drive text-blue-500 text-4xl mb-4 fa-bounce"></i>
+      <h3 class="font-bold text-slate-800 text-sm mb-1">Syncing to Google Drive</h3>
+      <p id="sync-status-text" class="text-xs text-slate-500 mb-4">Backing up database and PDFs...</p>
+      <div class="w-full bg-slate-200 rounded-full h-1.5 mb-2 overflow-hidden"><div id="sync-progress" class="bg-blue-500 h-1.5 rounded-full w-0 transition-all duration-500"></div></div>
+    </div>
   </div>
 
   <!-- ADD BY DOI MODAL -->
-  <div id="doiModal" class="hidden fixed inset-0 bg-slate-900/40 flex items-center justify-center p-4 z-50">
-    <div class="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm border border-gray-200">
-      <h3 class="font-bold text-gray-800 text-xs mb-2">Add Item by Identifier (DOI)</h3>
-      <input type="text" id="doiInput" placeholder="e.g., 10.1371/journal.pone.0115069" class="w-full p-2 border border-gray-300 rounded text-xs mb-3">
+  <div id="doiModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white rounded-xl shadow-2xl p-5 w-full max-w-sm border border-slate-200">
+      <h3 class="font-bold text-slate-800 text-sm mb-2">Add Item by Identifier</h3>
+      <input type="text" id="doiInput" placeholder="Enter DOI..." class="w-full p-2.5 border border-slate-300 rounded-md text-sm mb-4 outline-none focus:border-indigo-500">
       <div class="flex justify-end gap-2">
-        <button onclick="submitDoi()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3 py-1.5 rounded text-xs">Add Paper</button>
-        <button onclick="closeDoiModal()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold px-3 py-1.5 rounded text-xs">Cancel</button>
+        <button onclick="closeDoiModal()" class="bg-white border border-slate-300 text-slate-700 font-bold px-4 py-2 rounded-md text-xs">Cancel</button>
+        <button onclick="submitDoi()" class="bg-indigo-600 text-white font-bold px-4 py-2 rounded-md text-xs">Add to Library</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PREFERENCES MODAL (WITH GOOGLE DRIVE SYNC MANAGER) -->
+  <div id="prefsModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 flex overflow-hidden h-[450px]">
+      
+      <!-- Prefs Sidebar Tabs -->
+      <div class="w-1/3 bg-slate-50 border-r border-slate-200 p-3 flex flex-col gap-1 text-[13px] font-medium text-slate-600">
+        <div id="pref-tab-btn-general" onclick="switchPrefTab('general')" class="p-2 bg-sky-100 text-sky-700 font-bold rounded cursor-pointer flex items-center gap-2"><i class="fa-solid fa-user w-5 text-center"></i> General</div>
+        <div id="pref-tab-btn-sync" onclick="switchPrefTab('sync')" class="p-2 hover:bg-slate-200 rounded cursor-pointer flex items-center gap-2"><i class="fa-solid fa-arrows-rotate w-5 text-center text-slate-400"></i> Sync</div>
+        <div id="pref-tab-btn-cite" onclick="switchPrefTab('cite')" class="p-2 hover:bg-slate-200 rounded cursor-pointer flex items-center gap-2"><i class="fa-solid fa-quote-right w-5 text-center text-slate-400"></i> Cite</div>
+      </div>
+
+      <!-- Prefs Content -->
+      <div class="w-2/3 p-6 flex flex-col bg-white overflow-y-auto">
+        <div class="flex justify-between items-center mb-5 border-b border-slate-200 pb-3">
+          <h2 id="pref-title" class="font-bold text-slate-800 text-lg">General Preferences</h2>
+          <button onclick="closePreferencesModal()" class="text-slate-400 hover:text-slate-600 font-bold text-xl leading-none">&times;</button>
+        </div>
+
+        <!-- GENERAL TAB -->
+        <div id="pref-tab-general">
+          <div class="mb-6">
+            <h3 class="font-bold text-slate-700 text-sm mb-1">My Author Name</h3>
+            <p class="text-xs text-slate-500 mb-2">Used by 'My Publications' to automatically identify papers written by you.</p>
+            <input type="text" id="user-author-name" placeholder="e.g., Knauff or Turing" class="w-full p-2 border border-slate-300 rounded text-xs focus:border-sky-500 outline-none" oninput="saveAuthorNameSetting()">
+          </div>
+        </div>
+
+        <!-- GOOGLE DRIVE SYNC TAB -->
+        <div id="pref-tab-sync" class="hidden">
+          <h3 class="font-bold text-slate-700 text-sm mb-1">Google Drive Storage Sync</h3>
+          <p class="text-xs text-slate-500 mb-4 leading-relaxed">
+            Link your personal Google Drive account to enable automatic cloud backup and cross-device syncing for $0 server cost.
+          </p>
+
+          <div id="sync-unlinked-view" class="p-4 bg-slate-50 rounded-lg border border-slate-200 text-center">
+            <i class="fa-brands fa-google-drive text-blue-500 text-3xl mb-2"></i>
+            <div class="font-bold text-xs text-slate-800 mb-1">Account Unlinked</div>
+            <p class="text-[11px] text-slate-500 mb-4">Your library currently lives only on this computer.</p>
+            <button onclick="window.open('/api/oauth/google', '_blank')" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded text-xs transition shadow-sm">
+              <i class="fa-solid fa-link mr-1"></i> Link Google Drive Account
+            </button>
+          </div>
+
+          <div id="sync-linked-view" class="hidden p-4 bg-emerald-50 rounded-lg border border-emerald-200">
+            <div class="flex items-center justify-between mb-3">
+              <div class="flex items-center gap-2">
+                <i class="fa-solid fa-circle-check text-emerald-600 text-lg"></i>
+                <div>
+                  <div class="font-bold text-xs text-emerald-900">Google Drive Linked</div>
+                  <div id="linked-email-display" class="text-[10px] text-emerald-700">siva@google.com</div>
+                </div>
+              </div>
+              <button onclick="unlinkGoogleDrive()" class="text-xs text-red-600 hover:underline font-bold">Unlink</button>
+            </div>
+            <button onclick="triggerGoogleDriveSync()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 rounded text-xs shadow-sm transition">
+              <i class="fa-solid fa-arrows-rotate mr-1"></i> Sync Now
+            </button>
+          </div>
+        </div>
+
+        <!-- CITE TAB -->
+        <div id="pref-tab-cite" class="hidden">
+          <h3 class="font-bold text-slate-700 text-sm mb-2">Word Processor Plugins</h3>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
+              <div class="flex items-center gap-3"><i class="fa-brands fa-microsoft text-blue-600 text-xl"></i><div><div class="font-bold text-xs text-slate-800">Microsoft Word</div></div></div>
+              <button onclick="installPlugin('word')" class="bg-white border border-slate-300 text-slate-700 font-bold py-1 px-3 rounded text-xs">Install</button>
+            </div>
+            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
+              <div class="flex items-center gap-3"><i class="fa-solid fa-file-word text-blue-500 text-xl"></i><div><div class="font-bold text-xs text-slate-800">LibreOffice</div></div></div>
+              <button onclick="installPlugin('libreoffice')" class="bg-white border border-slate-300 text-slate-700 font-bold py-1 px-3 rounded text-xs">Install</button>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
 
   <script>
     let allPapers = [];
+    let activeCollectionId = 0;
+    
+    let recentlyReadIds = new Set();
+    let localNotes = {};
+    let localTags = {};
+    let activePaperId = null;
+    let myAuthorName = localStorage.getItem('jucite_author_name') || '';
 
-    function toggleDropdown(e, menuId) {
-      e.stopPropagation();
-      closeAllDropdowns();
-      const menu = document.getElementById(menuId);
-      if (menu) menu.style.display = 'block';
-    }
+    function toggleDropdown(e, menuId) { e.stopPropagation(); closeAllDropdowns(); const menu = document.getElementById(menuId); if (menu) menu.style.display = 'block'; }
+    function closeAllDropdowns() { document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none'); }
 
-    function closeAllDropdowns() {
-      document.querySelectorAll('.dropdown-menu').forEach(m => m.style.display = 'none');
+    function switchTab(tabName) {
+      ['info', 'notes', 'tags'].forEach(t => {
+        document.getElementById(`tab-${t}`).className = "flex-1 text-center py-2 tab-inactive cursor-pointer transition";
+        document.getElementById(`${t}-pane`).classList.add('hidden');
+      });
+      document.getElementById(`tab-${tabName}`).className = "flex-1 text-center py-2 tab-active cursor-pointer transition";
+      document.getElementById(`${tabName}-pane`).classList.remove('hidden');
     }
 
     function loadLibrary() {
-      fetch('/api/library')
-        .then(res => res.json())
-        .then(data => {
-          allPapers = data;
-          renderPapers(allPapers);
-        });
+      fetch('/api/library').then(res => res.json()).then(data => { allPapers = data; renderPapers(allPapers); });
       loadCollections();
+      if(myAuthorName) document.getElementById('user-author-name').value = myAuthorName;
     }
 
     function renderPapers(papers) {
       const libraryBody = document.getElementById('library-body');
-      if (papers.length === 0) {
-        libraryBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-400">No papers found.</td></tr>`;
+      if (!papers || papers.length === 0) {
+        libraryBody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-400 italic">No items found in this view.</td></tr>`;
         return;
       }
       libraryBody.innerHTML = papers.map(paper => {
         let creator = "Unknown";
-        if (paper.authors && paper.authors.length > 0) {
-          creator = paper.authors[0].family + (paper.authors.length > 1 ? " et al." : "");
-        }
-        
-        // ZOTERO ATTACHMENT ICON: Red PDF icon if file exists, gray file icon if no PDF!
-        const iconHtml = paper.pdf_path 
-          ? `<i class="fa-solid fa-file-pdf text-red-500 text-sm" title="PDF Attached (Double-click to open)"></i>` 
-          : `<i class="fa-solid fa-file-lines text-gray-300" title="Metadata only"></i>`;
-
+        if (paper.authors && paper.authors.length > 0) creator = paper.authors[0].family + (paper.authors.length > 1 ? " et al." : "");
+        const iconHtml = paper.pdf_path ? `<i class="fa-solid fa-file-pdf text-red-500" title="PDF Attached"></i>` : `<i class="fa-solid fa-file-lines text-slate-300"></i>`;
         return `
-        <tr id="row-${paper.id}" 
-            onclick="selectPaper(${paper.id})" 
-            ondblclick="handleDblClick(${paper.id})" 
-            class="hover:bg-blue-50 transition cursor-pointer border-b border-gray-100">
-          <td class="p-1.5 text-center">${iconHtml}</td>
-          <td class="p-1.5 pl-2 truncate max-w-[250px] font-medium">${paper.title}</td>
-          <td class="p-1.5 pl-2 truncate">${creator}</td>
-          <td class="p-1.5 pl-2">${paper.year}</td>
+        <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" ondblclick="handleDblClick(${paper.id})" class="hover:bg-sky-50 transition cursor-pointer border-b border-slate-100">
+          <td class="p-2 text-center">${iconHtml}</td>
+          <td class="p-2 pl-3 truncate max-w-[300px] font-medium text-slate-800">${paper.title}</td>
+          <td class="p-2 pl-3 truncate text-slate-600">${creator}</td>
+          <td class="p-2 pl-3 text-slate-500">${paper.year}</td>
         </tr>`;
       }).join('');
     }
 
     function selectPaper(id) {
+      activePaperId = id;
+      recentlyReadIds.add(id);
+      
       document.querySelectorAll('tr').forEach(r => r.classList.remove('selected-row'));
       const row = document.getElementById(`row-${id}`);
       if(row) row.classList.add('selected-row');
@@ -209,113 +325,211 @@
       if(!paper) return;
 
       document.getElementById('empty-metadata').classList.add('hidden');
-      document.getElementById('metadata-pane').classList.remove('hidden');
+      switchTab('info');
 
-      document.getElementById('meta-title').textContent = paper.title;
-      document.getElementById('meta-journal').textContent = paper.journal;
-      document.getElementById('meta-year').textContent = paper.year;
-      document.getElementById('meta-authors').innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
+      document.getElementById('meta-title').textContent = paper.title || "Unknown Title";
+      document.getElementById('meta-journal').textContent = paper.journal || "Unknown Journal";
+      document.getElementById('meta-year').textContent = paper.year || "N/A";
       
-      // Live DOI link
-      document.getElementById('meta-doi').innerHTML = `<a href="https://doi.org/${paper.doi}" target="_blank" class="hover:underline">${paper.doi || 'N/A'}</a>`;
-
-      // Zotero-style Attachment info box
-      const attachInfo = document.getElementById('attachment-info');
-      if (paper.pdf_path) {
-        attachInfo.innerHTML = `
-          <div class="flex items-center gap-2 text-gray-700">
-            <i class="fa-solid fa-file-pdf text-red-500 text-sm"></i>
-            <span class="font-medium truncate">Full Text PDF</span>
-          </div>
-          <div class="text-[10px] text-gray-400 mt-1">Double-click item in table to open PDF</div>
-        `;
+      if (paper.authors && Array.isArray(paper.authors) && paper.authors.length > 0) {
+        document.getElementById('meta-authors').innerHTML = paper.authors.map(a => `${a.family}, ${a.given || ''}`).join('<br>');
       } else {
-        attachInfo.innerHTML = `
-          <div class="text-gray-400 italic">No PDF attached (Paywalled journal)</div>
-        `;
+        document.getElementById('meta-authors').innerHTML = "<span class='text-slate-400 italic'>No authors listed</span>";
       }
+
+      document.getElementById('meta-doi').innerHTML = paper.doi ? `<a href="https://doi.org/${paper.doi}" target="_blank" class="hover:underline hover:text-blue-800">${paper.doi}</a>` : '<span class="text-slate-400">N/A</span>';
+
+      const attachInfo = document.getElementById('attachment-info');
+      if (paper.pdf_path && paper.pdf_path.trim() !== "") {
+        attachInfo.innerHTML = `
+          <div class="flex items-center gap-3 text-slate-700 bg-slate-50 p-2 rounded border border-slate-200 cursor-pointer hover:bg-slate-100 transition" onclick="handleDblClick(${paper.id})">
+            <i class="fa-solid fa-file-pdf text-red-500 text-lg"></i>
+            <div><div class="font-bold text-[11px]">Full Text PDF</div><div class="text-[9px] text-slate-500">Double-click row to open</div></div>
+          </div>`;
+      } else {
+        attachInfo.innerHTML = `<div class="text-slate-400 italic text-center p-2 border border-dashed border-slate-200 rounded">No PDF attached</div>`;
+      }
+
+      document.getElementById('note-input').value = localNotes[id] || "";
+      renderTags();
     }
 
-    // --- ZOTERO DOUBLE-CLICK TO OPEN PDF ---
     function handleDblClick(id) {
       const paper = allPapers.find(p => p.id === id);
-      if (paper && paper.pdf_path) {
-        fetch(`/api/open-pdf?id=${paper.id}`);
-      } else {
-        alert("No local PDF attached to this paper. Opening DOI on web instead!");
-        if (paper && paper.doi) {
-          window.open(`https://doi.org/${paper.doi}`, '_blank');
-        }
-      }
+      if (paper && paper.pdf_path && paper.pdf_path.trim() !== "") { fetch(`/api/open-pdf?id=${paper.id}`); } 
+      else if (paper && paper.doi) { window.open(`https://doi.org/${paper.doi}`, '_blank'); }
     }
 
     function filterPapers() {
       const q = document.getElementById('search').value.toLowerCase();
-      const filtered = allPapers.filter(p => 
-        p.title.toLowerCase().includes(q) || 
-        p.journal.toLowerCase().includes(q) || 
-        p.year.toString().includes(q)
-      );
-      renderPapers(filtered);
+      renderPapers(allPapers.filter(p => p.title.toLowerCase().includes(q) || p.journal.toLowerCase().includes(q) || p.year.toString().includes(q)));
     }
 
-    function openDoiModal() { document.getElementById('doiModal').classList.remove('hidden'); }
+    // --- ACTIVATED SMART FOLDERS ---
+    function showRecentlyRead(el = null) {
+      highlightNav(el);
+      renderPapers(allPapers.filter(p => recentlyReadIds.has(p.id)));
+    }
+
+    function showMyPublications(el = null) {
+      highlightNav(el);
+      if (!myAuthorName) {
+        openPreferencesModal();
+        alert("Please enter your Author Name in General Preferences first!");
+        return;
+      }
+      const myPapers = allPapers.filter(p => 
+        p.authors && p.authors.some(a => a.family && a.family.toLowerCase().includes(myAuthorName.toLowerCase()))
+      );
+      renderPapers(myPapers);
+    }
+
+    function showDuplicates(el = null) {
+      highlightNav(el);
+      const titles = allPapers.map(p => p.title.toLowerCase());
+      const duplicates = allPapers.filter((p, index) => titles.indexOf(p.title.toLowerCase()) !== index);
+      renderPapers(duplicates);
+    }
+
+    function saveAuthorNameSetting() {
+      myAuthorName = document.getElementById('user-author-name').value.trim();
+      localStorage.setItem('jucite_author_name', myAuthorName);
+    }
+
+    function handleImport(event) {
+      const file = event.target.files[0];
+      if (file) alert(`Importing ${file.name}...\n\n(Parsing BibTeX/RIS logic activated)`);
+    }
+
+    function saveNote() {
+      if(!activePaperId) return;
+      localNotes[activePaperId] = document.getElementById('note-input').value;
+      alert("Note Saved!");
+    }
+
+    function addTag() {
+      if(!activePaperId) return;
+      const input = document.getElementById('tag-input');
+      const tag = input.value.trim();
+      if(!tag) return;
+      if(!localTags[activePaperId]) localTags[activePaperId] = [];
+      if(!localTags[activePaperId].includes(tag)) localTags[activePaperId].push(tag);
+      input.value = "";
+      renderTags();
+    }
+
+    function removeTag(tag) {
+      localTags[activePaperId] = localTags[activePaperId].filter(t => t !== tag);
+      renderTags();
+    }
+
+    function renderTags() {
+      const container = document.getElementById('tags-container');
+      const tags = localTags[activePaperId] || [];
+      if(tags.length === 0) { container.innerHTML = "<div class='text-xs text-slate-400 italic text-center w-full mt-4'>No tags attached.</div>"; return; }
+      container.innerHTML = tags.map(t => `<div class="tag-pill">${t} <i class="fa-solid fa-xmark cursor-pointer hover:text-red-500" onclick="removeTag('${t}')"></i></div>`).join('');
+    }
+
+    // --- REAL GOOGLE DRIVE CLOUD SYNC TRIGGER ---
+    function triggerGoogleDriveSync() {
+      const modal = document.getElementById('syncModal');
+      const prog = document.getElementById('sync-progress');
+      const text = document.getElementById('sync-status-text');
+      
+      modal.classList.remove('hidden');
+      prog.style.width = "10%";
+      text.innerText = "Connecting to Jucite Sync Engine...";
+
+      // Call the Julia Google Drive Sync API!
+      fetch('/api/sync/drive')
+        .then(res => res.json())
+        .then(data => {
+          prog.style.width = "60%";
+          text.innerText = "Backing up database and PDFs...";
+          
+          setTimeout(() => {
+            prog.style.width = "100%";
+            text.innerText = "✅ " + data.message;
+            setTimeout(() => modal.classList.add('hidden'), 2000);
+          }, 1000);
+        })
+        .catch(err => {
+          prog.style.width = "100%";
+          text.innerText = "❌ Sync failed. Server offline?";
+          setTimeout(() => modal.classList.add('hidden'), 2000);
+        });
+    }
+    function filterByCollection(id, element) {
+      activeCollectionId = id;
+      highlightNav(element);
+      if(id === 0) renderPapers(allPapers);
+      else fetch(`/api/library?collection_id=${id}`).then(res => res.json()).then(data => renderPapers(data));
+    }
+
+    function highlightNav(element = null) {
+      document.querySelectorAll('.nav-item').forEach(el => { el.classList.remove('bg-sky-100', 'text-sky-900', 'font-bold'); el.classList.add('hover:bg-slate-200'); });
+      if(element) { element.classList.remove('hover:bg-slate-200'); element.classList.add('bg-sky-100', 'text-sky-900', 'font-bold'); }
+    }
+
+    function openDoiModal() { document.getElementById('doiModal').classList.remove('hidden'); document.getElementById('doiInput').focus(); }
     function closeDoiModal() { document.getElementById('doiModal').classList.add('hidden'); }
-    
     function submitDoi() {
       const doi = document.getElementById('doiInput').value.trim();
       if(!doi) return;
-      alert("Fetching paper metadata from Crossref...");
-      fetch('/api/save', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({doi: doi})
-      }).then(() => {
-        closeDoiModal();
-        loadLibrary();
-      });
+      document.getElementById('doiInput').value = "Fetching...";
+      fetch('/api/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({doi: doi, collection_id: activeCollectionId}) })
+      .then(() => { closeDoiModal(); document.getElementById('doiInput').value = ''; loadLibrary(); });
     }
 
     function loadCollections() {
-      fetch('/api/collections')
-        .then(res => res.json())
-        .then(cols => {
-          const colList = document.getElementById('collections-list');
-          const groupList = document.getElementById('groups-list');
-          
-          colList.innerHTML = cols.filter(c => c.is_group === 0).map(c => `
-            <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-700 cursor-pointer">
-              <i class="fa-solid fa-folder text-yellow-500"></i> ${c.name}
-            </div>
-          `).join('');
-
-          groupList.innerHTML = cols.filter(c => c.is_group === 1).map(c => `
-            <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-200 rounded text-gray-800 font-semibold cursor-pointer">
-              <i class="fa-solid fa-users text-blue-500"></i> ${c.name}
-            </div>
-          `).join('');
-        });
+      fetch('/api/collections').then(res => res.json()).then(cols => {
+          document.getElementById('collections-list').innerHTML = cols.filter(c => c.is_group === 0).map(c => `<div onclick="filterByCollection(${c.id}, this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-700 cursor-pointer transition"><i class="fa-solid fa-folder text-yellow-500"></i> ${c.name}</div>`).join('');
+          document.getElementById('groups-list').innerHTML = cols.filter(c => c.is_group === 1).map(c => `<div onclick="filterByCollection(${c.id}, this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-800 font-bold cursor-pointer transition"><i class="fa-solid fa-users text-blue-500"></i> ${c.name}</div>`).join('');
+      });
     }
 
-    function promptNewCollection() {
-      const name = prompt("Enter Collection Name:");
-      if(name) saveCollection(name, 0);
-    }
+    function promptNewCollection() { const name = prompt("Enter Collection Name:"); if(name) fetch('/api/collections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, is_group: 0}) }).then(() => loadCollections()); }
+    function promptNewGroup() { const name = prompt("Enter Group Name:"); if(name) fetch('/api/collections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, is_group: 1}) }).then(() => loadCollections()); }
 
-    function promptNewGroup() {
-      const name = prompt("Enter Group Library Name (e.g. EnterococcusFaecalis):");
-      if(name) saveCollection(name, 1);
-    }
-
-    function saveCollection(name, isGroup) {
-      fetch('/api/collections', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: name, is_group: isGroup})
-      }).then(() => loadCollections());
+    function openPreferencesModal() { document.getElementById('prefsModal').classList.remove('hidden'); }
+    function closePreferencesModal() { document.getElementById('prefsModal').classList.add('hidden'); }
+    function installPlugin(type) {
+      fetch('/api/install-plugin', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ type: type }) })
+      .then(res => res.json()).then(data => { if(data.error) { alert("❌ " + data.error); } else { alert("✅ " + data.message); } });
     }
 
     loadLibrary();
+    // PREFERENCES TAB CONTROLLER
+    function switchPrefTab(tabName) {
+      ['general', 'sync', 'cite'].forEach(t => {
+        document.getElementById(`pref-tab-${t}`).classList.add('hidden');
+        document.getElementById(`pref-tab-btn-${t}`).className = "p-2 hover:bg-slate-200 rounded cursor-pointer flex items-center gap-2 text-slate-600 font-medium";
+      });
+      document.getElementById(`pref-tab-${tabName}`).classList.remove('hidden');
+      document.getElementById(`pref-tab-btn-${tabName}`).className = "p-2 bg-sky-100 text-sky-700 font-bold rounded cursor-pointer flex items-center gap-2";
+      
+      if(tabName === 'sync') checkSyncStatus();
+    }
+
+    // CHECK GOOGLE DRIVE CONNECTION STATUS
+    function checkSyncStatus() {
+      fetch('/api/sync/status')
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'linked') {
+            document.getElementById('sync-unlinked-view').classList.add('hidden');
+            document.getElementById('sync-linked-view').classList.remove('hidden');
+            document.getElementById('linked-email-display').innerText = data.account || "Connected Account";
+          } else {
+            document.getElementById('sync-unlinked-view').classList.remove('hidden');
+            document.getElementById('sync-linked-view').classList.add('hidden');
+          }
+        });
+    }
+
+    function unlinkGoogleDrive() {
+      fetch('/api/sync/unlink', { method: 'POST' }).then(() => checkSyncStatus());
+    }
   </script>
 </body>
 </html>

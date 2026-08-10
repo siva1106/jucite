@@ -1,82 +1,72 @@
 const saveBtn = document.getElementById('save-btn');
 const statusDiv = document.getElementById('status');
-let detectedDoi = null;
 
-// Regular expression to find a standard DOI format on the webpage
+let detectedDoi = "";
+let currentTab = null;
+
 const doiRegex = /\b(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\b/i;
 
-/**
- * Scans the active browser tab to look for a DOI.
- */
-function scanPageForDoi() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const tab = tabs[0];
-    if (!tab) return;
+// Scan page silently on open
+chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  currentTab = tabs[0];
+  if (!currentTab) return;
 
-    // 1. Try to find the DOI directly in the tab's URL
-    const urlMatch = tab.url.match(doiRegex);
-    if (urlMatch) {
-      setDoiFound(urlMatch[1]);
-      return;
+  // Check URL
+  const urlMatch = currentTab.url.match(doiRegex);
+  if (urlMatch) {
+    detectedDoi = urlMatch[1].replace(/[.,;()]+$/, "");
+    statusDiv.textContent = "DOI Detected";
+    return;
+  }
+
+  // Scan Meta Tags
+  chrome.scripting.executeScript({
+    target: { tabId: currentTab.id },
+    func: () => {
+      const meta = document.querySelector('meta[name="citation_doi"], meta[name="dc.identifier"], meta[name="DOI"]');
+      return meta ? meta.content : document.documentElement.outerHTML;
     }
-
-    // 2. If not in the URL, inject a script to scan the webpage's raw HTML
-    chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => document.documentElement.outerHTML
-    }, (results) => {
-      if (!results || !results[0]) {
-        statusDiv.textContent = "Could not scan page content.";
+  }, (results) => {
+    if (results && results[0] && results[0].result) {
+      const match = results[0].result.match(doiRegex);
+      if (match) {
+        detectedDoi = match[1].replace(/[.,;()]+$/, "");
+        statusDiv.textContent = "DOI Detected";
         return;
       }
-
-      const htmlContent = results[0].result;
-      const bodyMatch = htmlContent.match(doiRegex);
-
-      if (bodyMatch) {
-        setDoiFound(bodyMatch[1]);
-      } else {
-        statusDiv.textContent = "No DOI detected on this page.";
-      }
-    });
+    }
+    statusDiv.textContent = "Ready to save page/PDF";
   });
-}
+});
 
-function setDoiFound(doi) {
-  // Clean up any trailing punctuation caught in the regex match
-  detectedDoi = doi.replace(/[.,;()]+$/, "");
-  statusDiv.innerHTML = `Found DOI:<br><strong>${detectedDoi}</strong>`;
-  saveBtn.disabled = false;
-}
-
-// Handle clicking the "Save to Jucite" button
+// ONE-CLICK SAVE BUTTON
 saveBtn.addEventListener('click', () => {
-  if (!detectedDoi) return;
+  if (!currentTab) return;
 
   saveBtn.disabled = true;
   statusDiv.textContent = "Saving to Jucite...";
 
-  // Make the API call to our local Julia server!
-  fetch('http://localhost:8080/api/save', {
+  const payload = {
+    doi: detectedDoi,
+    url: currentTab.url,
+    title: currentTab.title || "Saved Document"
+  };
+
+  fetch('http://127.0.0.1:8080/api/save', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ doi: detectedDoi })
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
   })
-  .then(response => {
-    if (response.ok) {
-      statusDiv.innerHTML = "✅ Paper saved successfully!";
+  .then(res => {
+    if (res.ok) {
+      statusDiv.innerHTML = "✅ Saved to Jucite!";
     } else {
-      statusDiv.innerHTML = "❌ Failed to save (server error).";
+      statusDiv.innerHTML = "❌ Failed to save.";
       saveBtn.disabled = false;
     }
   })
-  .catch(error => {
-    statusDiv.innerHTML = "❌ Error: Is Jucite server running?";
+  .catch(err => {
+    statusDiv.innerHTML = "❌ Server offline.";
     saveBtn.disabled = false;
   });
 });
-
-// Start scanning as soon as the popup opens
-scanPageForDoi();
