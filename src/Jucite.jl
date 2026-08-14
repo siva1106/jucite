@@ -5,7 +5,7 @@ using DataFrames
 using HTTP
 using JSON3
 using Oxygen
-
+using Blink    # NEW: Desktop Window Manager
 const DB_PATH = "jucite_library.sqlite"
 const PDF_DIR = "pdfs"
 const STYLES_CATALOG_FILE = "styles_catalog.json"
@@ -128,55 +128,249 @@ const DRIVE_SYNC_DIR = "Jucite_Cloud_Backup"
 Uploads jucite_library.sqlite and PDF attachments to Google Drive.
 """
 function sync_to_google_drive(access_token::String="")
-    println("☁️ Starting Google Drive Cloud Sync...")
+    println("☁️ Structuring and Syncing to Google Drive...")
     
     if !isfile(DB_PATH)
         return Dict("status" => "error", "message" => "Database file not found.")
     end
     
-    # 1. Local Cloud Mirror Backup (Works with Google Drive Desktop / Nextcloud)
-    cloud_backup_path = joinpath(homedir(), DRIVE_SYNC_DIR)
-    mkpath(cloud_backup_path)
-    mkpath(joinpath(cloud_backup_path, PDF_DIR))
+    drive_root = joinpath(homedir(), "Google_Drive_Jucite")
+    my_lib_dir = joinpath(drive_root, "My Library")
+    groups_dir = joinpath(drive_root, "Group Libraries")
     
-    # Backup Database
-    cp(DB_PATH, joinpath(cloud_backup_path, DB_PATH); force=true)
+    mkpath(my_lib_dir)
+    mkpath(joinpath(my_lib_dir, "pdfs"))
+    mkpath(groups_dir)
     
-    # Backup PDFs
+    # 1. Safe SQLite Backup (Bypasses WAL locks!)
+    try
+        # SQLite's built-in backup command ensures the file is copied safely even while running
+        run(`sqlite3 $DB_PATH ".backup '$(joinpath(my_lib_dir, DB_PATH))'"`)
+    catch e
+        # Fallback if sqlite3 command line tool isn't installed
+        cp(DB_PATH, joinpath(my_lib_dir, DB_PATH); force=true)
+    end
+    
+    # 2. Intelligently route PDFs
+    db = get_db()
+    df_papers = DBInterface.execute(db, "SELECT id, pdf_path FROM papers WHERE pdf_path IS NOT NULL AND pdf_path != ''") |> DataFrame
+    
     pdf_count = 0
-    if isdir(PDF_DIR)
-        for file in readdir(PDF_DIR)
-            src_file = joinpath(PDF_DIR, file)
-            if isfile(src_file)
-                cp(src_file, joinpath(cloud_backup_path, PDF_DIR, file); force=true)
-                pdf_count += 1
-            end
+    for row in eachrow(df_papers)
+        if ismissing(row.pdf_path) || !isfile(row.pdf_path) continue end
+        
+        filename = basename(row.pdf_path)
+        
+        cursor_group = DBInterface.execute(db, """
+            SELECT c.name FROM collections c 
+            JOIN collection_papers cp ON c.id = cp.collection_id 
+            WHERE cp.paper_id = ? AND c.is_group = 1 LIMIT 1
+        """, (row.id,))
+        
+        # Check if the cursor actually has results before trying to extract them
+        df_group = DataFrame(cursor_group)
+        if nrow(df_group) > 0
+            group_name = df_group.name[1]
+            clean_group_name = replace(group_name, r"[^a-zA-Z0-9_\-\s]" => "_")
+            group_folder = joinpath(groups_dir, clean_group_name)
+            mkpath(group_folder)
+            
+            cp(row.pdf_path, joinpath(group_folder, filename); force=true)
+        else
+            cp(row.pdf_path, joinpath(my_lib_dir, "pdfs", filename); force=true)
         end
+        pdf_count += 1
     end
     
-    println("✅ Local Cloud Backup Complete: ", cloud_backup_path)
-    
-    # 2. Direct REST Upload to Google Drive API (if access_token is present)
-    if !isempty(access_token)
-        try
-            println("📤 Direct Upload to Google Drive Cloud API...")
-            db_bytes = read(DB_PATH)
-            upload_headers = [
-                "Authorization" => "Bearer $access_token",
-                "Content-Type" => "application/x-sqlite3"
-            ]
-            HTTP.post("https://www.googleapis.com/upload/drive/v3/files?uploadType=media", upload_headers, db_bytes)
-            println("✅ Direct Google Drive API Upload Complete!")
-        catch e
-            println("⚠️ Direct Drive API failed, falling back to Local Cloud Mirror.")
-        end
-    end
+    println("✅ Google Drive Sync Complete! Structured $pdf_count PDFs.")
     
     return Dict(
         "status" => "success", 
-        "message" => "Library and $pdf_count PDFs synced successfully!",
-        "backup_path" => cloud_backup_path
+        "message" => "Synced $pdf_count PDFs successfully!",
+        "backup_path" => drive_root
     )
+end
+# ======================================================
+# --- GOOGLE DRIVE CLOUD SYNC API ---
+# ======================================================
+
+@route ["OPTIONS"] "/api/sync/drive" function(req::HTTP.Request)
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, OPTIONS",
+        "Access-Control-Allow-Headers" => "*"
+    ], "")
+end
+# ======================================================
+# --- FLEXIBLE & BULLETPROOF GOOGLE DRIVE UPLOADER ---
+# ======================================================
+
+function safe_str(val)
+    if val isa AbstractVector
+        return isempty(val) ? "" : safe_str(val[1])
+    elseif val isa AbstractString || val isa Symbol
+        return String(val)
+    elseif val === nothing || ismissing(val)
+        return ""
+    else
+        return string(val)
+    end
+end
+
+function get_drive_folder_id(folder_name::String, parent_id::String, token::String)
+    url = "https://www.googleapis.com/drive/v3/files"
+    encoded_name = replace(folder_name, "'" => "%27")
+    query = "name = '$(encoded_name)' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    if !isempty(parent_id) query *= " and '$(parent_id)' in parents" end
+    
+    full_url = "$url?q=$(replace(query, " " => "%20"))&fields=files(id)"
+    try
+        res = HTTP.get(full_url, ["Authorization" => "Bearer $token"]; status_exception=false)
+        if res.status == 200
+            json_res = JSON3.read(res.body)
+            if haskey(json_res, :files) && !isempty(json_res.files) return String(json_res.files[1].id) end
+        end
+    catch e end
+    return ""
+end
+
+# NEW: Function to check if a FILE already exists to prevent duplicates!
+function get_drive_file_id(file_name::String, parent_id::String, token::String)
+    url = "https://www.googleapis.com/drive/v3/files"
+    encoded_name = replace(file_name, "'" => "%27")
+    query = "name = '$(encoded_name)' and trashed = false"
+    if !isempty(parent_id) query *= " and '$(parent_id)' in parents" end
+    
+    full_url = "$url?q=$(replace(query, " " => "%20"))&fields=files(id)"
+    try
+        res = HTTP.get(full_url, ["Authorization" => "Bearer $token"]; status_exception=false)
+        if res.status == 200
+            json_res = JSON3.read(res.body)
+            if haskey(json_res, :files) && !isempty(json_res.files) return String(json_res.files[1].id) end
+        end
+    catch e end
+    return ""
+end
+
+function create_drive_folder(folder_name::String, parent_id, token)
+    parent_str = safe_str(parent_id); tok_str = safe_str(token)
+    
+    existing_id = get_drive_folder_id(folder_name, parent_str, tok_str)
+    if !isempty(existing_id) return existing_id end
+    
+    url = "https://www.googleapis.com/drive/v3/files"
+    headers = ["Authorization" => "Bearer $tok_str", "Content-Type" => "application/json"]
+    body_dict = Dict{String, Any}("name" => folder_name, "mimeType" => "application/vnd.google-apps.folder")
+    if !isempty(parent_str) body_dict["parents"] = [parent_str] end
+    
+    try
+        res = HTTP.post(url, headers, JSON3.write(body_dict); status_exception=false)
+        if res.status == 200 return safe_str(JSON3.read(res.body).id) end
+    catch e end
+    return ""
+end
+
+function upload_file_to_drive(file_path::String, file_name::String, parent_id, mime::String, token)
+    parent_str = safe_str(parent_id); tok_str = safe_str(token)
+    
+    # SMART CHECK: Does the file already exist in this folder? If yes, skip it!
+    existing_id = get_drive_file_id(file_name, parent_str, tok_str)
+    if !isempty(existing_id)
+        println("⏭️ Skipped (Already Exists): $file_name")
+        return
+    end
+    
+    url_create = "https://www.googleapis.com/drive/v3/files"
+    headers = ["Authorization" => "Bearer $tok_str", "Content-Type" => "application/json"]
+    meta_dict = Dict{String, Any}("name" => file_name)
+    if !isempty(parent_str) meta_dict["parents"] = [parent_str] end
+    
+    try
+        res_meta = HTTP.post(url_create, headers, JSON3.write(meta_dict); status_exception=false)
+        if res_meta.status != 200 return end
+        
+        file_id = safe_str(JSON3.read(res_meta.body).id)
+        url_upload = "https://www.googleapis.com/upload/drive/v3/files/$file_id?uploadType=media"
+        
+        HTTP.patch(url_upload, ["Authorization" => "Bearer $tok_str", "Content-Type" => mime], read(file_path); status_exception=false)
+        println("✅ Uploaded: $file_name")
+    catch e end
+end
+
+# --- MAIN SYNC ENDPOINT ---
+@get "/api/sync/drive" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    
+    token_file = "google_tokens.json"
+    access_token = ""
+    if isfile(token_file)
+        try access_token = safe_str(JSON3.read(read(token_file, String)).access_token) catch end
+    end
+    
+    if isempty(access_token) return HTTP.Response(400, headers, "{\"status\": \"error\", \"message\": \"Google Drive not linked.\"}") end
+    println("☁️ Authenticating and uploading to Google Drive...")
+    
+    try
+        root_id = create_drive_folder("Jucite Library", "", access_token)
+        my_lib_id = create_drive_folder("My Library", root_id, access_token)
+        groups_id = create_drive_folder("Group Libraries", root_id, access_token)
+        
+        temp_dir = joinpath(homedir(), "Jucite_Temp_Upload")
+        mkpath(temp_dir)
+        
+        db = SQLite.DB(DB_PATH)
+        df_papers = DBInterface.execute(db, "SELECT id, title, year, journal, doi, pdf_path FROM papers") |> DataFrame
+        
+        item_count = 0
+        for row in eachrow(df_papers)
+            
+            # THE FIX: A strict, aggressive filename scrubber!
+            # Removes HTML tags, newlines, tabs, and limits strictly to alphanumeric, dashes, and spaces.
+            safe_title = replace(row.title, r"<[^>]*>" => "") # Strip HTML tags like <i>
+            safe_title = replace(safe_title, r"&[a-zA-Z]+;" => "") # Strip HTML entities like &amp;
+            safe_title = replace(safe_title, r"[\n\r\t]" => " ") # Remove hidden line breaks
+            safe_title = replace(safe_title, r"[^a-zA-Z0-9\-\s]" => "") # Remove all weird symbols
+            safe_title = replace(safe_title, r"\s+" => "_") # Convert spaces to underscores
+            
+            # Ensure it is exactly 50 characters max so Google search doesn't truncate it
+            safe_title = safe_title[1:min(length(safe_title), 50)]
+            
+            # Clean up trailing underscores
+            safe_title = replace(safe_title, r"_+$" => "")
+            
+            filename_base = "$(row.year)_$(safe_title)"
+            
+            cursor_group = DBInterface.execute(db, "SELECT c.name FROM collections c JOIN collection_papers cp ON c.id = cp.collection_id WHERE cp.paper_id = ? AND c.is_group = 1 LIMIT 1", (row.id,))
+            df_group = DataFrame(cursor_group)
+            
+            target_cloud_id = my_lib_id
+            if nrow(df_group) > 0
+                target_cloud_id = create_drive_folder(df_group.name[1], groups_id, access_token)
+            end
+            
+            has_pdf = !ismissing(row.pdf_path) && !isempty(row.pdf_path) && isfile(row.pdf_path)
+            
+            if has_pdf
+                upload_file_to_drive(row.pdf_path, "$(filename_base).pdf", target_cloud_id, "application/pdf", access_token)
+            else
+                authors = get_paper_authors(db, row.id)
+                author_str = isempty(authors) ? "Unknown" : join(authors, ", ")
+                metadata_content = "Title: $(row.title)\nAuthors: $author_str\nJournal: $(row.journal)\nYear: $(row.year)\nDOI: $(row.doi)"
+                
+                txt_path = joinpath(temp_dir, "$(filename_base)_Metadata.txt")
+                write(txt_path, metadata_content)
+                upload_file_to_drive(txt_path, "$(filename_base)_Metadata.txt", target_cloud_id, "text/plain", access_token)
+            end
+            item_count += 1
+        end
+        
+        rm(temp_dir, recursive=true, force=true)
+        println("✅ Direct Cloud Sync Complete!")
+        return HTTP.Response(200, headers, JSON3.write(Dict("status" => "success", "message" => "Sync complete! No duplicates!")))
+        
+    catch e
+        return HTTP.Response(500, headers, "{\"status\": \"error\", \"message\": \"Sync Failed.\"}")
+    end
 end
 # ======================================================
 # --- GOOGLE DRIVE OAUTH2 LINKAGE ENGINE ---
@@ -184,7 +378,10 @@ end
 
 const TOKEN_FILE = "google_tokens.json"
 
-# 1. Check if Google Drive is currently linked
+# REPLACE THESE WITH YOUR REAL CREDENTIALS FROM GOOGLE CLOUD:
+const GOOGLE_CLIENT_ID = "294097590701-qn697fri8ommi53cus67tb89sqn76sii.apps.googleusercontent.com"
+const GOOGLE_CLIENT_SECRET = "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"
+
 @get "/api/sync/status" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     if isfile(TOKEN_FILE)
@@ -195,41 +392,69 @@ const TOKEN_FILE = "google_tokens.json"
     end
 end
 
-# Development Auto-Linker (Bypasses Google Cloud Console setup for local testing)
 @get "/api/oauth/google" function(req::HTTP.Request)
-    # Redirect directly to our callback with a valid test code!
-    callback_url = "http://127.0.0.1:8080/api/oauth/callback?code=jucite_dev_linked_success"
-    return HTTP.Response(302, ["Location" => callback_url], "")
+    redirect_uri = "http://127.0.0.1:8080/api/oauth/callback"
+    # Scope for creating and managing only the files Jucite creates
+    scope = "https://www.googleapis.com/auth/drive.file" 
+    
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=$(GOOGLE_CLIENT_ID)&redirect_uri=$(redirect_uri)&response_type=code&scope=$(scope)&access_type=offline&prompt=consent"
+    
+    return HTTP.Response(302, ["Location" => auth_url], "")
 end
 
 @get "/api/oauth/callback" function(req::HTTP.Request)
     params = queryparams(req)
-    code = get(params, "code", "jucite_dev_linked_success")
     
-    # Save the token file cleanly
-    token_data = Dict(
-        "status" => "linked",
-        "account" => "sivams77772@gmail.com",
-        "code" => code
+    if haskey(params, "error")
+        return HTTP.Response(400, "User denied access.")
+    end
+    
+    code = get(params, "code", "")
+    redirect_uri = "http://127.0.0.1:8080/api/oauth/callback"
+    
+    println("🔄 Exchanging authorization code for Access Token...")
+    
+    # Send code to Google to get the real Access Token
+    token_url = "https://oauth2.googleapis.com/token"
+    payload = Dict(
+        "client_id" => GOOGLE_CLIENT_ID,
+        "client_secret" => GOOGLE_CLIENT_SECRET,
+        "code" => code,
+        "grant_type" => "authorization_code",
+        "redirect_uri" => redirect_uri
     )
-    write(TOKEN_FILE, JSON3.write(token_data))
     
-    println("✅ Google Drive Account Linked: sivams77772@gmail.com")
-    
-    html_response = """
-    <!DOCTYPE html>
-    <html>
-    <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f8fafc;">
-      <h1 style="color:#10b981;">✅ Google Drive Account Linked!</h1>
-      <p style="color:#475569;">Jucite has linked <strong>sivams77772@gmail.com</strong> for automatic cloud backups.</p>
-      <p style="color:#94a3b8; font-size:12px;">Closing window...</p>
-      <script>setTimeout(() => window.close(), 1500);</script>
-    </body>
-    </html>
-    """
-    return HTTP.Response(200, ["Content-Type" => "text/html"], html_response)
+    try
+        res = HTTP.post(token_url, ["Content-Type" => "application/json"], JSON3.write(payload))
+        token_data = JSON3.read(res.body)
+        
+        # Save real token to file
+        save_data = Dict(
+            "status" => "linked",
+            "access_token" => String(token_data.access_token),
+            "account" => "Linked Google Account"
+        )
+        write(TOKEN_FILE, JSON3.write(save_data))
+        println("✅ Real Google Access Token Acquired & Saved!")
+        
+        html_response = """
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f8fafc;">
+          <h1 style="color:#10b981;">✅ Google Drive Successfully Linked!</h1>
+          <p style="color:#475569;">You can now sync your library to the cloud.</p>
+          <p style="color:#94a3b8; font-size:12px;">This window will close automatically...</p>
+          <script>setTimeout(() => window.close(), 2000);</script>
+        </body>
+        </html>
+        """
+        return HTTP.Response(200, ["Content-Type" => "text/html; charset=utf-8"], html_response)
+        
+    catch e
+        println("❌ Token Exchange Error: ", e)
+        return HTTP.Response(500, "Failed to connect to Google.")
+    end
 end
-
 # 4. Unlink Google Drive Account
 @post "/api/sync/unlink" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -432,13 +657,19 @@ end
 @get "/api/library" function(req::HTTP.Request)
     params = queryparams(req)
     col_id = parse(Int, get(params, "collection_id", "0"))
+    is_trash = parse(Int, get(params, "trash", "0")) # Check if we are viewing trash
     
     db = SQLite.DB(DB_PATH)
+    # Ensure trashed column exists
+    try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
     
-    if col_id > 0
-        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ?", (col_id,)) |> DataFrame
+    if is_trash == 1
+        # Fetch ONLY trashed papers
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 1") |> DataFrame
+    elseif col_id > 0
+        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ? AND p.trashed = 0", (col_id,)) |> DataFrame
     else
-        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers") |> DataFrame
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 0") |> DataFrame
     end
     
     papers_list = []
@@ -466,6 +697,44 @@ end
     println("📂 Desktop Action: Opening PDF file -> ", pdf_path)
     run(`xdg-open $pdf_path`, wait=false)
     return HTTP.Response(200, "Opening PDF...")
+end
+# ======================================================
+# --- TRASH & MOVE PAPER ENGINE ---
+# ======================================================
+
+# 1. API to Move Paper to Trash
+@post "/api/trash" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    data = JSON3.read(req.body)
+    db = SQLite.DB(DB_PATH)
+    
+    # Ensure the 'trashed' column exists (safe to run multiple times)
+    try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
+    
+    # Mark as trashed
+    SQLite.execute(db, "UPDATE papers SET trashed = 1 WHERE id = ?", (Int(data.id),))
+    println("🗑️ Moved paper ID $(data.id) to Trash")
+    return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+end
+
+# 2. API to Move Paper to a Group/Collection
+@post "/api/move" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    data = JSON3.read(req.body)
+    paper_id = Int(data.paper_id)
+    col_id = Int(data.collection_id)
+    
+    db = SQLite.DB(DB_PATH)
+    # Remove from current groups
+    SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
+    
+    # Insert into new group (if not 'My Library' which is 0)
+    if col_id > 0
+        SQLite.execute(db, "INSERT INTO collection_papers (collection_id, paper_id) VALUES (?, ?)", (col_id, paper_id))
+    end
+    
+    println("📁 Moved paper ID $paper_id to Collection ID $col_id")
+    return HTTP.Response(200, headers, "{\"status\": \"success\"}")
 end
 
 @post "/api/save" function(req::HTTP.Request)
@@ -651,15 +920,40 @@ end
     end
 end
 
-function start_server()
-    println("🚀 Starting Jucite Private Server on port 8080...")
+# ======================================================
+# --- STANDALONE DESKTOP LAUNCHER ---
+# ======================================================
+
+function launch_desktop_app()
+    println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()
     load_or_fetch_style_catalog()
-    @async begin
-        sleep(1.5)
-        run(`xdg-open http://localhost:8080`, wait=false)
-    end
-    serve(port=8080, cors=true)
+    
+    # 1. Start the Oxygen server in the background (asynchronously)
+    @async serve(port=8080, cors=true)
+    
+    # Give the server 1 second to fully boot up
+    sleep(1.0)
+    
+    println("🖥️ Launching Jucite Native Desktop Window...")
+    
+    # 2. Create the Native Desktop Window using Blink (Electron)
+    opts = Dict(
+        "title" => "Jucite Reference Manager",
+        "width" => 1200,
+        "height" => 800,
+        "minWidth" => 800,
+        "minHeight" => 600,
+        "autoHideMenuBar" => true,
+        "webPreferences" => Dict("nodeIntegration" => true)
+    )
+    
+    w = Window(opts)
+    Blink.loadurl(w, "http://127.0.0.1:8080/")
+    
+    println("✅ Jucite Desktop is running!")
+    
+    wait() 
 end
 
-end # end of module
+end # <----- YOU NEED THIS 'end' TO CLOSE THE MODULE!

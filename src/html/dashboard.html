@@ -92,6 +92,7 @@
         <div onclick="showRecentlyRead(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clock text-slate-400"></i> Recently Read</div>
         <div onclick="showMyPublications(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-file-lines text-emerald-500"></i> My Publications</div>
         <div onclick="showDuplicates(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clone text-amber-500"></i> Duplicate Items</div>
+        
 
         <div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
         <hr class="border-slate-200 my-3">
@@ -296,19 +297,23 @@
     function renderPapers(papers) {
       const libraryBody = document.getElementById('library-body');
       if (!papers || papers.length === 0) {
-        libraryBody.innerHTML = `<tr><td colspan="4" class="p-6 text-center text-slate-400 italic">No items found in this view.</td></tr>`;
+        libraryBody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">No items found in this view.</td></tr>`;
         return;
       }
       libraryBody.innerHTML = papers.map(paper => {
         let creator = "Unknown";
         if (paper.authors && paper.authors.length > 0) creator = paper.authors[0].family + (paper.authors.length > 1 ? " et al." : "");
         const iconHtml = paper.pdf_path ? `<i class="fa-solid fa-file-pdf text-red-500" title="PDF Attached"></i>` : `<i class="fa-solid fa-file-lines text-slate-300"></i>`;
+        
         return `
         <tr id="row-${paper.id}" onclick="selectPaper(${paper.id})" ondblclick="handleDblClick(${paper.id})" class="hover:bg-sky-50 transition cursor-pointer border-b border-slate-100">
           <td class="p-2 text-center">${iconHtml}</td>
           <td class="p-2 pl-3 truncate max-w-[300px] font-medium text-slate-800">${paper.title}</td>
           <td class="p-2 pl-3 truncate text-slate-600">${creator}</td>
           <td class="p-2 pl-3 text-slate-500">${paper.year}</td>
+          <td class="p-2 text-center relative">
+            <i class="fa-solid fa-ellipsis-vertical px-2 py-1 hover:bg-slate-300 rounded text-slate-400 hover:text-slate-700 transition" onclick="openPaperMenu(event, ${paper.id})"></i>
+          </td>
         </tr>`;
       }).join('');
     }
@@ -529,6 +534,44 @@
 
     function unlinkGoogleDrive() {
       fetch('/api/sync/unlink', { method: 'POST' }).then(() => checkSyncStatus());
+    }
+    // --- 3-DOT MENU & TRASH LOGIC ---
+    
+    function openPaperMenu(event, paperId) {
+      event.stopPropagation(); // Stop row click
+      
+      // Fetch collections to show in prompt
+      fetch('/api/collections').then(res => res.json()).then(cols => {
+        let msg = "Move Paper to:\n------------------\n0: My Library (Remove from group)\n";
+        cols.forEach(c => { msg += `${c.id}: ${c.name}\n`; });
+        
+        // Use native prompt for clean UI
+        let choice = prompt(msg + "\nType the ID number to Move, or type 'TRASH' to delete:");
+        
+        if (choice && choice.toUpperCase() === 'TRASH') {
+          if(confirm("Are you sure you want to move this paper to the Trash?")) {
+            fetch('/api/trash', { method: 'POST', body: JSON.stringify({id: paperId}) })
+            .then(() => loadLibrary());
+          }
+        } 
+        else if (choice !== null && !isNaN(parseInt(choice))) {
+          fetch('/api/move', { method: 'POST', body: JSON.stringify({paper_id: paperId, collection_id: parseInt(choice)}) })
+          .then(() => {
+            alert("Paper moved successfully!");
+            loadLibrary();
+          });
+        }
+      });
+    }
+
+    function showTrash() {
+      highlightNav(document.getElementById('trash-btn'));
+      document.getElementById('empty-metadata').classList.remove('hidden');
+      document.getElementById('metadata-pane').classList.add('hidden');
+      
+      fetch(`/api/library?trash=1`)
+        .then(res => res.json())
+        .then(data => { allPapers = data; renderPapers(data); });
     }
   </script>
 </body>
