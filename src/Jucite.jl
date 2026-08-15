@@ -790,46 +790,64 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
     end
 end
+# ======================================================
+# --- NATIVE LIBREOFFICE FLOATING SIDEBAR ENGINE ---
+# ======================================================
 
-# --- CSL SEARCH & FETCH ---
-@route ["OPTIONS"] "/api/styles/search" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
+# FIX: Changed to Channel{Any}(1) so Symbol vs String keys never clash!
+const LIBRE_CHANNEL = Channel{Any}(1)
+
+@get "/libreoffice" function()
+    return file("src/html/libreoffice.html")
+end
+@get "/word" function()
+    return file("src/html/word.html")
 end
 
-@get "/api/styles/search" function(req::HTTP.Request)
-    params = queryparams(req)
-    query = lowercase(get(params, "q", ""))
-    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/json"]
+# 1. Trigger Floating Sidebar Window
+@get "/api/libreoffice/trigger" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     
-    if isempty(query) return HTTP.Response(200, headers, "[]") end
+    # Launch floating Electron sidebar window
+    opts = Dict(
+        "title" => "Jucite Citation Manager",
+        "width" => 350,
+        "height" => 680,
+        "alwaysOnTop" => true,
+        "autoHideMenuBar" => true,
+        "webPreferences" => Dict("nodeIntegration" => true)
+    )
     
-    catalog = load_or_fetch_style_catalog()
-    results = []
-    count = 0
-    for style in catalog
-        if contains(lowercase(String(style["title"])), query) || contains(lowercase(String(style["name"])), query)
-            push!(results, style)
-            count += 1
-            if count >= 15 break end
-        end
+    w = Window(opts)
+    Blink.loadurl(w, "http://127.0.0.1:8080/libreoffice")
+    
+    # Clear any old actions in the channel before waiting
+    while isready(LIBRE_CHANNEL)
+        take!(LIBRE_CHANNEL)
     end
-    return HTTP.Response(200, headers, JSON3.write(results))
-end
-
-@route ["OPTIONS"] "/api/style" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
-end
-
-@get "/api/style" function(req::HTTP.Request)
-    params = queryparams(req)
-    style_name = get(params, "name", "apa")
-    headers = ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true", "Content-Type" => "application/xml"]
     
-    csl_xml = fetch_csl_style(style_name)
-    if isempty(csl_xml) return HTTP.Response(404, headers, "Style not found") end
-    return HTTP.Response(200, headers, csl_xml)
+    # Wait for the user to click a paper in the floating sidebar!
+    action_data = take!(LIBRE_CHANNEL)
+    
+    # Auto-close the floating window after click
+    try close(w) catch end
+    
+    return HTTP.Response(200, headers, JSON3.write(action_data))
 end
 
+# 2. Capture Sidebar Click
+@route ["OPTIONS"] "/api/libreoffice/action" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/libreoffice/action" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    data = json(req)
+    
+    # Send user click data directly to the waiting LibreOffice process!
+    put!(LIBRE_CHANNEL, data)
+    return HTTP.Response(200, headers, "{\"status\": \"sent\"}")
+end
 # --- SEARCH & FORMATTING ENGINE ---
 @route ["OPTIONS"] "/api/search" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
