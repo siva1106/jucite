@@ -2,13 +2,16 @@
   "manifest_version": 3,
   "name": "Jucite Connector",
   "version": "1.0",
-  "permissions": ["activeTab", "scripting"],
-  "host_permissions": ["http://127.0.0.1:8080/*"],
-  "content_scripts": [
-    {
-      "matches": ["https://docs.google.com/document/*"],
-      "js": ["google-docs-injector.js"]
-    }
+  "description": "Save academic papers directly to your local Jucite database.",
+  "permissions": [
+    "activeTab",
+    "scripting"
   ],
-  "action": { "default_popup": "popup.html" }
+  "host_permissions": [
+    "http://127.0.0.1:8080/*",
+    "http://localhost:8080/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  }
 }

@@ -648,28 +648,28 @@ function fetch_csl_style(style_name::String)
 end
 
 # ======================================================
-# --- SERVER ENDPOINTS ---
+# --- SERVER ENDPOINTS & API SUITE ---
 # ======================================================
+
 @get "/" function()
     return file("src/html/dashboard.html")
 end
 
+# 1. LIBRARY ENDPOINT (WITH TRASH & GROUP FILTERING)
 @get "/api/library" function(req::HTTP.Request)
     params = queryparams(req)
     col_id = parse(Int, get(params, "collection_id", "0"))
-    is_trash = parse(Int, get(params, "trash", "0")) # Check if we are viewing trash
+    is_trash = parse(Int, get(params, "trash", "0"))
     
     db = SQLite.DB(DB_PATH)
-    # Ensure trashed column exists
     try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
     
     if is_trash == 1
-        # Fetch ONLY trashed papers
         df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 1") |> DataFrame
     elseif col_id > 0
-        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ? AND p.trashed = 0", (col_id,)) |> DataFrame
+        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ? AND (p.trashed IS NULL OR p.trashed = 0)", (col_id,)) |> DataFrame
     else
-        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 0") |> DataFrame
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed IS NULL OR trashed = 0") |> DataFrame
     end
     
     papers_list = []
@@ -681,6 +681,7 @@ end
     return papers_list
 end
 
+# 2. LAUNCH LOCAL PDF
 @get "/api/open-pdf" function(req::HTTP.Request)
     params = queryparams(req)
     id_str = get(params, "id", "")
@@ -698,45 +699,76 @@ end
     run(`xdg-open $pdf_path`, wait=false)
     return HTTP.Response(200, "Opening PDF...")
 end
-# ======================================================
-# --- TRASH & MOVE PAPER ENGINE ---
-# ======================================================
 
-# 1. API to Move Paper to Trash
+# 3. COLLECTIONS & GROUPS (GET & POST WITH CORS)
+@route ["OPTIONS"] "/api/collections" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@get "/api/collections" function(req::HTTP.Request)
+    db = SQLite.DB(DB_PATH)
+    df = DBInterface.execute(db, "SELECT id, name, is_group FROM collections") |> DataFrame
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    return HTTP.Response(200, headers, JSON3.write([Dict("id" => row.id, "name" => row.name, "is_group" => row.is_group) for row in eachrow(df)]))
+end
+
+@post "/api/collections" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = json(req)
+        db = SQLite.DB(DB_PATH)
+        SQLite.execute(SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)"), (String(data.name), Int(data.is_group)))
+        println("📁 Collection/Group Created: ", data.name)
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
+    end
+end
+
+# 4. MOVE TO TRASH (WITH PREFLIGHT OPTIONS)
+@route ["OPTIONS"] "/api/trash" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
 @post "/api/trash" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    data = JSON3.read(req.body)
-    db = SQLite.DB(DB_PATH)
-    
-    # Ensure the 'trashed' column exists (safe to run multiple times)
-    try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
-    
-    # Mark as trashed
-    SQLite.execute(db, "UPDATE papers SET trashed = 1 WHERE id = ?", (Int(data.id),))
-    println("🗑️ Moved paper ID $(data.id) to Trash")
-    return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    try
+        data = json(req)
+        db = SQLite.DB(DB_PATH)
+        try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
+        SQLite.execute(db, "UPDATE papers SET trashed = 1 WHERE id = ?", (Int(data.id),))
+        println("🗑️ Moved paper ID $(data.id) to Trash")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to trash\"}")
+    end
 end
 
-# 2. API to Move Paper to a Group/Collection
+# 5. MOVE TO GROUP (WITH PREFLIGHT OPTIONS)
+@route ["OPTIONS"] "/api/move" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
 @post "/api/move" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    data = JSON3.read(req.body)
-    paper_id = Int(data.paper_id)
-    col_id = Int(data.collection_id)
-    
-    db = SQLite.DB(DB_PATH)
-    # Remove from current groups
-    SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
-    
-    # Insert into new group (if not 'My Library' which is 0)
-    if col_id > 0
-        SQLite.execute(db, "INSERT INTO collection_papers (collection_id, paper_id) VALUES (?, ?)", (col_id, paper_id))
+    try
+        data = json(req)
+        paper_id = Int(data.paper_id)
+        col_id = Int(data.collection_id)
+        
+        db = SQLite.DB(DB_PATH)
+        SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
+        if col_id > 0
+            SQLite.execute(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)", (col_id, paper_id))
+        end
+        println("📁 Moved paper ID $paper_id to Collection ID $col_id")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to move\"}")
     end
-    
-    println("📁 Moved paper ID $paper_id to Collection ID $col_id")
-    return HTTP.Response(200, headers, "{\"status\": \"success\"}")
 end
 
+# 6. UNIVERSAL SAVE ENDPOINT
 @post "/api/save" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     try
@@ -755,30 +787,6 @@ end
         return HTTP.Response(400, headers, "{\"error\": \"Nothing to save\"}")
     catch e
         println("❌ Save Error: ", e)
-        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
-    end
-end
-
-# --- COLLECTIONS ---
-@route ["OPTIONS"] "/api/collections" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
-end
-
-@get "/api/collections" function(req::HTTP.Request)
-    db = SQLite.DB(DB_PATH)
-    df = DBInterface.execute(db, "SELECT id, name, is_group FROM collections") |> DataFrame
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    return HTTP.Response(200, headers, JSON3.write([Dict("id" => row.id, "name" => row.name, "is_group" => row.is_group) for row in eachrow(df)]))
-end
-
-@post "/api/collections" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    try
-        data = json(req)
-        db = SQLite.DB(DB_PATH)
-        SQLite.execute(SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)"), (String(data.name), Int(data.is_group)))
-        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
-    catch e
         return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
     end
 end
