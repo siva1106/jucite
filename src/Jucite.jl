@@ -646,6 +646,70 @@ function fetch_csl_style(style_name::String)
     catch e end
     return ""
 end
+# ======================================================
+# --- TRASH & MOVE PAPER ENGINE ---
+# ======================================================
+
+# Helper function to safely extract an integer whether the JSON sent a Number or a String
+function safe_parse_int(val)
+    if val isa Number
+        return Int(val)
+    elseif val isa AbstractString
+        return parse(Int, String(val))
+    else
+        return 0
+    end
+end
+
+@route ["OPTIONS"] "/api/trash" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/trash" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = JSON3.read(req.body)
+        
+        # Safely parse the ID whether it came as a string or a number
+        paper_id = safe_parse_int(data.id)
+        
+        db = SQLite.DB(DB_PATH)
+        try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
+        
+        SQLite.execute(db, "UPDATE papers SET trashed = 1 WHERE id = ?", (paper_id,))
+        println("🗑️ Moved paper ID $paper_id to Trash")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Trash Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to trash\"}")
+    end
+end
+
+@route ["OPTIONS"] "/api/move" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/move" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = JSON3.read(req.body)
+        
+        # Safely parse the IDs
+        paper_id = safe_parse_int(data.paper_id)
+        col_id = safe_parse_int(data.collection_id)
+        
+        db = SQLite.DB(DB_PATH)
+        SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
+        if col_id > 0
+            SQLite.execute(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)", (col_id, paper_id))
+        end
+        println("📁 Moved paper ID $paper_id to Collection ID $col_id")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Move Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to move\"}")
+    end
+end
 
 # ======================================================
 # --- SERVER ENDPOINTS & API SUITE ---
@@ -700,9 +764,14 @@ end
     return HTTP.Response(200, "Opening PDF...")
 end
 
-# 3. COLLECTIONS & GROUPS (GET & POST WITH CORS)
+# --- COLLECTIONS API ENDPOINTS ---
+
 @route ["OPTIONS"] "/api/collections" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*"
+    ], "")
 end
 
 @get "/api/collections" function(req::HTTP.Request)
@@ -717,57 +786,15 @@ end
     try
         data = json(req)
         db = SQLite.DB(DB_PATH)
+        # Safe insert that won't crash if the folder already exists
         SQLite.execute(SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, ?)"), (String(data.name), Int(data.is_group)))
-        println("📁 Collection/Group Created: ", data.name)
+        println("📁 Created Collection/Group: ", data.name)
         return HTTP.Response(200, headers, "{\"status\": \"success\"}")
     catch e
-        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
+        println("❌ Collection Creation Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to save collection\"}")
     end
 end
-
-# 4. MOVE TO TRASH (WITH PREFLIGHT OPTIONS)
-@route ["OPTIONS"] "/api/trash" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
-end
-
-@post "/api/trash" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    try
-        data = json(req)
-        db = SQLite.DB(DB_PATH)
-        try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
-        SQLite.execute(db, "UPDATE papers SET trashed = 1 WHERE id = ?", (Int(data.id),))
-        println("🗑️ Moved paper ID $(data.id) to Trash")
-        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
-    catch e
-        return HTTP.Response(500, headers, "{\"error\": \"Failed to trash\"}")
-    end
-end
-
-# 5. MOVE TO GROUP (WITH PREFLIGHT OPTIONS)
-@route ["OPTIONS"] "/api/move" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
-end
-
-@post "/api/move" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    try
-        data = json(req)
-        paper_id = Int(data.paper_id)
-        col_id = Int(data.collection_id)
-        
-        db = SQLite.DB(DB_PATH)
-        SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
-        if col_id > 0
-            SQLite.execute(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)", (col_id, paper_id))
-        end
-        println("📁 Moved paper ID $paper_id to Collection ID $col_id")
-        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
-    catch e
-        return HTTP.Response(500, headers, "{\"error\": \"Failed to move\"}")
-    end
-end
-
 # 6. UNIVERSAL SAVE ENDPOINT
 @post "/api/save" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -800,9 +827,7 @@ const LIBRE_CHANNEL = Channel{Any}(1)
 @get "/libreoffice" function()
     return file("src/html/libreoffice.html")
 end
-@get "/word" function()
-    return file("src/html/word.html")
-end
+
 
 # 1. Trigger Floating Sidebar Window
 @get "/api/libreoffice/trigger" function(req::HTTP.Request)
@@ -949,6 +974,9 @@ end
 # ======================================================
 # --- STANDALONE DESKTOP LAUNCHER ---
 # ======================================================
+# ======================================================
+# --- STANDALONE DESKTOP LAUNCHER ---
+# ======================================================
 
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
@@ -981,5 +1009,4 @@ function launch_desktop_app()
     
     wait() 
 end
-
 end # <----- YOU NEED THIS 'end' TO CLOSE THE MODULE!

@@ -63,9 +63,9 @@
 
   <!-- TOOLBAR -->
   <div class="bg-white border-b border-slate-200 flex items-center p-2 gap-3 shadow-sm z-30">
-    <div class="flex items-center gap-1 border-r border-slate-200 pr-3">
-      <button onclick="promptNewCollection()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-folder-plus text-yellow-500 text-lg"></i></button>
-      <button onclick="promptNewGroup()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-users text-blue-500 text-lg"></i></button>
+   <div class="flex items-center gap-1 border-r border-slate-200 pr-3">
+      <button onclick="promptNewCollection()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600" title="New Collection"><i class="fa-solid fa-folder-plus text-yellow-500 text-lg"></i></button>
+      <button onclick="promptNewGroup()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600" title="New Group Library"><i class="fa-solid fa-users text-blue-500 text-lg"></i></button>
     </div>
     <div class="flex items-center gap-1 border-r border-slate-200 pr-3">
       <button onclick="openDoiModal()" class="hover:bg-slate-100 p-1.5 rounded transition text-slate-600"><i class="fa-solid fa-wand-magic-sparkles text-purple-500 text-lg"></i></button>
@@ -92,8 +92,7 @@
         <div onclick="showRecentlyRead(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clock text-slate-400"></i> Recently Read</div>
         <div onclick="showMyPublications(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-file-lines text-emerald-500"></i> My Publications</div>
         <div onclick="showDuplicates(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clone text-amber-500"></i> Duplicate Items</div>
-        
-
+        <div id="trash-btn" onclick="showTrash()" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-trash-can text-red-400"></i> Trash</div>
         <div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
         <hr class="border-slate-200 my-3">
         <div class="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between items-center">
@@ -186,7 +185,62 @@
       </div>
     </div>
   </div>
+  <!-- NEW COLLECTION / GROUP MODAL (Electron Safe) -->
+  <div id="collectionModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm transition-opacity">
+    <div class="bg-white rounded-xl shadow-2xl p-5 w-full max-w-sm border border-slate-200 transform transition-all">
+      <div class="flex items-center gap-2 mb-3">
+        <i id="collectionModalIcon" class="fa-solid fa-folder text-yellow-500 text-lg"></i>
+        <h3 id="collectionModalTitle" class="font-bold text-slate-800 text-sm">New Collection</h3>
+      </div>
+      <p id="collectionModalDesc" class="text-xs text-slate-500 mb-3">Enter a name for this collection.</p>
+      
+      <!-- Hidden input to store whether this is a group (1) or folder (0) -->
+      <input type="hidden" id="collectionModalType" value="0">
+      
+      <input type="text" id="collectionInput" placeholder="Name..." class="w-full p-2.5 border border-slate-300 rounded-md text-sm mb-4 focus:ring-2 focus:ring-indigo-500 outline-none">
+      
+      <div class="flex justify-end gap-2">
+        <button onclick="closeCollectionModal()" class="bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold px-4 py-2 rounded-md text-xs transition">Cancel</button>
+        <button onclick="submitCollection()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-md text-xs transition shadow-md">OK</button>
+      </div>
+    </div>
+  </div>
+<!-- PAPER ACTIONS MODAL (Electron Safe) -->
+  <div id="actionModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm transition-opacity">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-sm border border-slate-200 overflow-hidden transform transition-all">
+      <div class="bg-slate-50 border-b border-slate-200 px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-layer-group text-indigo-600 text-lg"></i>
+          <h3 class="font-bold text-slate-800 text-sm">Paper Actions</h3>
+        </div>
+        <button onclick="closeActionModal()" class="text-slate-400 hover:text-slate-600 font-bold text-lg leading-none">&times;</button>
+      </div>
+      
+      <div class="p-4">
+        <input type="hidden" id="actionPaperId" value="">
+        
+        <label class="font-bold text-slate-600 uppercase block mb-2 text-[10px]">Move to Group / Collection</label>
+        <select id="moveSelect" class="w-full p-2 border border-slate-300 rounded mb-4 text-xs focus:ring-2 focus:ring-indigo-500 outline-none bg-white">
+          <option value="0">My Library (Remove from groups)</option>
+          <!-- Groups load here dynamically -->
+        </select>
+        
+        <!-- EXPLICIT ONCLICK HANDLER -->
+        <button type="button" onclick="submitMove()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-md text-xs transition shadow-sm mb-6">
+          <i class="fa-solid fa-arrow-right-to-bracket mr-1"></i> Move Paper
+        </button>
 
+        <hr class="border-slate-200 my-4">
+
+        <label class="font-bold text-red-500 uppercase block mb-2 text-[10px]">Danger Zone</label>
+        
+        <!-- EXPLICIT ONCLICK HANDLER -->
+        <button type="button" onclick="submitTrash()" class="w-full bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 font-bold px-4 py-2 rounded-md text-xs transition">
+          <i class="fa-solid fa-trash-can mr-1"></i> Move to Trash
+        </button>
+      </div>
+    </div>
+  </div>
   <!-- PREFERENCES MODAL (WITH GOOGLE DRIVE SYNC MANAGER) -->
   <div id="prefsModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
     <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 flex overflow-hidden h-[450px]">
@@ -465,6 +519,11 @@
       if(tags.length === 0) { container.innerHTML = "<div class='text-xs text-slate-400 italic text-center w-full mt-4'>No tags attached.</div>"; return; }
       container.innerHTML = tags.map(t => `<div class="tag-pill">${t} <i class="fa-solid fa-xmark cursor-pointer hover:text-red-500" onclick="removeTag('${t}')"></i></div>`).join('');
     }
+    function submitTrash() {
+      fetch('/api/trash', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: parseInt(document.getElementById('actionPaperId').value)}) }).then(() => { document.getElementById('actionModal').classList.add('hidden'); loadLibrary(); });
+    }
+
+    function showTrash(el) { activeCollectionId = -1; highlightNav(el); loadLibrary(); }
 
     // --- REAL GOOGLE DRIVE CLOUD SYNC TRIGGER ---
     function triggerGoogleDriveSync() {
@@ -524,9 +583,58 @@
       });
     }
 
-    function promptNewCollection() { const name = prompt("Enter Collection Name:"); if(name) fetch('/api/collections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, is_group: 0}) }).then(() => loadCollections()); }
-    function promptNewGroup() { const name = prompt("Enter Group Name:"); if(name) fetch('/api/collections', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: name, is_group: 1}) }).then(() => loadCollections()); }
+    // ======================================================
+    // --- COLLECTION & GROUP ACTIVATION ENGINE (ELECTRON SAFE) ---
+    // ======================================================
 
+    function closeCollectionModal() { 
+      document.getElementById('collectionModal').classList.add('hidden'); 
+    }
+
+    window.promptNewCollection = function() {
+      document.getElementById('collectionModalIcon').className = "fa-solid fa-folder text-yellow-500 text-lg";
+      document.getElementById('collectionModalTitle').innerText = "New Collection";
+      document.getElementById('collectionModalDesc').innerText = "Enter a name for this folder.";
+      document.getElementById('collectionModalType').value = "0"; // 0 = Folder
+      document.getElementById('collectionInput').value = "";
+      
+      document.getElementById('collectionModal').classList.remove('hidden');
+      document.getElementById('collectionInput').focus();
+    };
+
+    window.promptNewGroup = function() {
+      document.getElementById('collectionModalIcon').className = "fa-solid fa-users text-blue-500 text-lg";
+      document.getElementById('collectionModalTitle').innerText = "New Group Library";
+      document.getElementById('collectionModalDesc').innerText = "Enter a name for this shared library.";
+      document.getElementById('collectionModalType').value = "1"; // 1 = Group
+      document.getElementById('collectionInput').value = "";
+      
+      document.getElementById('collectionModal').classList.remove('hidden');
+      document.getElementById('collectionInput').focus();
+    };
+
+    window.submitCollection = function() {
+      const name = document.getElementById('collectionInput').value.trim();
+      const isGroup = parseInt(document.getElementById('collectionModalType').value);
+      
+      if (name !== "") {
+        fetch('/api/collections', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name, is_group: isGroup})
+        })
+        .then(res => res.json())
+        .then(data => {
+           if (data.status === "success") {
+             closeCollectionModal();
+             loadCollections(); // Instantly update the sidebar!
+           } else {
+             alert("Failed to create folder. Name might already exist.");
+           }
+        })
+        .catch(err => console.error("Network error connecting to Jucite."));
+      }
+    };
     function openPreferencesModal() { document.getElementById('prefsModal').classList.remove('hidden'); }
     function closePreferencesModal() { document.getElementById('prefsModal').classList.add('hidden'); }
     function installPlugin(type) {
@@ -566,44 +674,116 @@
     function unlinkGoogleDrive() {
       fetch('/api/sync/unlink', { method: 'POST' }).then(() => checkSyncStatus());
     }
-    // --- 3-DOT MENU & TRASH LOGIC ---
-    
-    function openPaperMenu(event, paperId) {
-      event.stopPropagation(); // Stop row click
-      
-      // Fetch collections to show in prompt
-      fetch('/api/collections').then(res => res.json()).then(cols => {
-        let msg = "Move Paper to:\n------------------\n0: My Library (Remove from group)\n";
-        cols.forEach(c => { msg += `${c.id}: ${c.name}\n`; });
-        
-        // Use native prompt for clean UI
-        let choice = prompt(msg + "\nType the ID number to Move, or type 'TRASH' to delete:");
-        
-        if (choice && choice.toUpperCase() === 'TRASH') {
-          if(confirm("Are you sure you want to move this paper to the Trash?")) {
-            fetch('/api/trash', { method: 'POST', body: JSON.stringify({id: paperId}) })
-            .then(() => loadLibrary());
-          }
-        } 
-        else if (choice !== null && !isNaN(parseInt(choice))) {
-          fetch('/api/move', { method: 'POST', body: JSON.stringify({paper_id: paperId, collection_id: parseInt(choice)}) })
-          .then(() => {
-            alert("Paper moved successfully!");
-            loadLibrary();
-          });
-        }
-      });
+    // ======================================================
+    // --- TRASH & PAPER ACTION ENGINE ---
+    // ======================================================
+
+    function closeActionModal() {
+      document.getElementById('actionModal').classList.add('hidden');
     }
 
-    function showTrash() {
-      highlightNav(document.getElementById('trash-btn'));
+    // 1. Open the Menu
+    window.openPaperMenu = function(event, paperId) {
+      event.stopPropagation(); // Prevent the row from selecting
+      
+      document.getElementById('actionPaperId').value = paperId;
+      const selectBox = document.getElementById('moveSelect');
+      
+      // Load current groups into the dropdown
+      fetch('/api/collections').then(res => res.json()).then(cols => {
+        let optionsHtml = '<option value="0">My Library (Remove from groups)</option>';
+        cols.forEach(c => {
+          const typeLabel = c.is_group ? "(Group)" : "(Collection)";
+          optionsHtml += `<option value="${c.id}">${c.name} ${typeLabel}</option>`;
+        });
+        selectBox.innerHTML = optionsHtml;
+        
+        document.getElementById('actionModal').classList.remove('hidden');
+      });
+    };
+
+    // 2. Submit Move
+    window.submitMove = function() {
+      const paperId = document.getElementById('actionPaperId').value;
+      const colId = document.getElementById('moveSelect').value;
+      
+      fetch('/api/move', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({paper_id: paperId, collection_id: parseInt(colId)})
+      }).then(() => {
+        closeActionModal();
+        loadLibrary(); // Refresh interface
+      });
+    };
+
+    // Submits the Trash Request
+    window.submitTrash = function() {
+      const pId = document.getElementById('actionPaperId').value;
+      
+      fetch('/api/trash', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ id: parseInt(pId) })
+      })
+      .then(res => res.json())
+      .then(data => {
+        closeActionModal();
+        // Reload interface so the paper vanishes
+        if (activeCollectionId > 0) {
+           filterByCollection(activeCollectionId, document.querySelector('.bg-sky-100'));
+        } else {
+           loadLibrary(); 
+        }
+      })
+      .catch(err => console.error("Trash request failed.", err));
+    };
+
+    // Shows the Trashed papers
+    window.showTrash = function(element = null) {
+      activeCollectionId = -1; // -1 represents Trash
+      highlightNav(element);
       document.getElementById('empty-metadata').classList.remove('hidden');
       document.getElementById('metadata-pane').classList.add('hidden');
       
-      fetch(`/api/library?trash=1`)
+      fetch('/api/library?trash=1')
         .then(res => res.json())
-        .then(data => { allPapers = data; renderPapers(data); });
-    }
+        .then(data => { 
+          allPapers = data; 
+          renderPapers(data); 
+        })
+        .catch(err => console.error("Failed to load trash.", err));
+    };
+    window.showTrash = function() {
+      activeCollectionId = -1; // -1 means Trash
+      
+      // 1. Visually highlight the Trash button in blue
+      document.querySelectorAll('.nav-item').forEach(el => { 
+        el.classList.remove('bg-sky-100', 'text-sky-900', 'font-bold'); 
+        el.classList.add('hover:bg-slate-200'); 
+      });
+      const trashBtn = document.getElementById('trash-btn');
+      if (trashBtn) {
+        trashBtn.classList.remove('hover:bg-slate-200'); 
+        trashBtn.classList.add('bg-sky-100', 'text-sky-900', 'font-bold');
+      }
+
+      // 2. Hide right-side metadata pane
+      document.getElementById('empty-metadata').classList.remove('hidden');
+      document.getElementById('metadata-pane').classList.add('hidden');
+      document.getElementById('notes-pane').classList.add('hidden');
+      document.getElementById('tags-pane').classList.add('hidden');
+      
+      // 3. Fetch deleted papers from Julia
+      fetch('/api/library?trash=1')
+        .then(res => res.json())
+        .then(data => { 
+          allPapers = data; 
+          renderPapers(data); 
+        })
+        .catch(err => console.error("Failed to load trash.", err));
+    };
+    
     // --- BROWSER CONNECTOR INSTALLERS ---
     function installChromeConnector() {
       alert("Opening Chrome Extensions Setup:\n\n1. In Chrome, enable 'Developer mode' (top right).\n2. Click 'Load unpacked' (top left).\n3. Select your 'extension' folder!");
