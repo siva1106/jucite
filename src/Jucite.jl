@@ -79,13 +79,17 @@ end
 @get "/api/library" function(req::HTTP.Request)
     params = queryparams(req)
     col_id = parse(Int, get(params, "collection_id", "0"))
+    is_trash = parse(Int, get(params, "trash", "0"))
     
     db = SQLite.DB(DB_PATH)
+    try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
     
-    if col_id > 0
-        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ?", (col_id,)) |> DataFrame
+    if is_trash == 1
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 1") |> DataFrame
+    elseif col_id > 0
+        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ? AND (p.trashed IS NULL OR p.trashed = 0)", (col_id,)) |> DataFrame
     else
-        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers") |> DataFrame
+        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed IS NULL OR trashed = 0") |> DataFrame
     end
     
     papers_list = []
@@ -96,7 +100,6 @@ end
     end
     return papers_list
 end
-
 # UPDATE: API Save now accepts the Collection ID!
 @post "/api/save" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]

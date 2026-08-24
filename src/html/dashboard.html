@@ -92,8 +92,10 @@
         <div onclick="showRecentlyRead(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clock text-slate-400"></i> Recently Read</div>
         <div onclick="showMyPublications(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-file-lines text-emerald-500"></i> My Publications</div>
         <div onclick="showDuplicates(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clone text-amber-500"></i> Duplicate Items</div>
-        <div id="trash-btn" onclick="showTrash()" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-trash-can text-red-400"></i> Trash</div>
-        <div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
+        <div onclick="showTrash(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-700 cursor-pointer ml-4 transition">
+  <i class="fa-solid fa-trash-can text-red-400"></i> Trash
+</div>       
+<div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
         <hr class="border-slate-200 my-3">
         <div class="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between items-center">
           <span>Group Libraries</span>
@@ -557,8 +559,25 @@
     function filterByCollection(id, element) {
       activeCollectionId = id;
       highlightNav(element);
-      if(id === 0) renderPapers(allPapers);
-      else fetch(`/api/library?collection_id=${id}`).then(res => res.json()).then(data => renderPapers(data));
+      
+      // Tell the user we are fetching fresh data
+      document.getElementById('library-body').innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">Loading papers...</td></tr>`;
+
+      // Always fetch fresh data from Julia so Trashed papers are completely removed from memory!
+      let url = '/api/library';
+      if (id > 0) {
+        url = `/api/library?collection_id=${id}`;
+      }
+      
+      fetch(url)
+        .then(res => res.json())
+        .then(data => { 
+          allPapers = data; 
+          renderPapers(data); 
+          document.getElementById('empty-metadata').classList.remove('hidden'); 
+          document.getElementById('metadata-pane').classList.add('hidden'); 
+        })
+        .catch(err => console.error("Failed to load collection:", err));
     }
 
     function highlightNav(element = null) {
@@ -717,71 +736,39 @@
       });
     };
 
-    // Submits the Trash Request
-    window.submitTrash = function() {
-      const pId = document.getElementById('actionPaperId').value;
+   // --- TRASH FOLDER VIEWER ---
+    window.showTrash = function(element) {
+      // 1. Set mode to Trash
+      activeCollectionId = -1; 
       
-      fetch('/api/trash', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ id: parseInt(pId) })
-      })
-      .then(res => res.json())
-      .then(data => {
-        closeActionModal();
-        // Reload interface so the paper vanishes
-        if (activeCollectionId > 0) {
-           filterByCollection(activeCollectionId, document.querySelector('.bg-sky-100'));
-        } else {
-           loadLibrary(); 
-        }
-      })
-      .catch(err => console.error("Trash request failed.", err));
-    };
-
-    // Shows the Trashed papers
-    window.showTrash = function(element = null) {
-      activeCollectionId = -1; // -1 represents Trash
-      highlightNav(element);
-      document.getElementById('empty-metadata').classList.remove('hidden');
-      document.getElementById('metadata-pane').classList.add('hidden');
-      
-      fetch('/api/library?trash=1')
-        .then(res => res.json())
-        .then(data => { 
-          allPapers = data; 
-          renderPapers(data); 
-        })
-        .catch(err => console.error("Failed to load trash.", err));
-    };
-    window.showTrash = function() {
-      activeCollectionId = -1; // -1 means Trash
-      
-      // 1. Visually highlight the Trash button in blue
+      // 2. Safely highlight the sidebar button
       document.querySelectorAll('.nav-item').forEach(el => { 
         el.classList.remove('bg-sky-100', 'text-sky-900', 'font-bold'); 
-        el.classList.add('hover:bg-slate-200'); 
+        el.classList.add('hover:bg-slate-200', 'text-slate-700'); 
       });
-      const trashBtn = document.getElementById('trash-btn');
-      if (trashBtn) {
-        trashBtn.classList.remove('hover:bg-slate-200'); 
-        trashBtn.classList.add('bg-sky-100', 'text-sky-900', 'font-bold');
+      if(element) { 
+        element.classList.remove('hover:bg-slate-200', 'text-slate-700'); 
+        element.classList.add('bg-sky-100', 'text-sky-900', 'font-bold'); 
       }
-
-      // 2. Hide right-side metadata pane
-      document.getElementById('empty-metadata').classList.remove('hidden');
-      document.getElementById('metadata-pane').classList.add('hidden');
-      document.getElementById('notes-pane').classList.add('hidden');
-      document.getElementById('tags-pane').classList.add('hidden');
       
-      // 3. Fetch deleted papers from Julia
-      fetch('/api/library?trash=1')
+      // 3. Hide right pane
+      document.getElementById('empty-metadata').classList.remove('hidden');
+      const metaPane = document.getElementById('metadata-pane');
+      if (metaPane) metaPane.classList.add('hidden');
+      
+      const libraryBody = document.getElementById('library-body');
+      libraryBody.innerHTML = `<tr><td colspan="5" class="p-6 text-center text-slate-400 italic">Fetching Trash...</td></tr>`;
+
+      // 4. Fetch explicitly from the Julia server
+      fetch('http://127.0.0.1:8080/api/library?trash=1')
         .then(res => res.json())
         .then(data => { 
           allPapers = data; 
           renderPapers(data); 
         })
-        .catch(err => console.error("Failed to load trash.", err));
+        .catch(err => {
+          alert("Failed to load Trash. Error: " + err.message);
+        });
     };
     
     // --- BROWSER CONNECTOR INSTALLERS ---
