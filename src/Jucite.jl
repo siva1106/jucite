@@ -687,7 +687,63 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to trash\"}")
     end
 end
+# 2. RESTORE PAPER FROM TRASH
+@route ["OPTIONS"] "/api/restore" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
 
+@post "/api/restore" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = JSON3.read(req.body)
+        paper_id = safe_parse_int(data.id)
+        
+        db = SQLite.DB(DB_PATH)
+        # Restore the paper by setting trashed back to 0
+        SQLite.execute(db, "UPDATE papers SET trashed = 0 WHERE id = ?", (paper_id,))
+        println("♻️ Restored paper ID $paper_id to Library")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Restore Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to restore\"}")
+    end
+end
+
+# 3. PERMANENTLY DELETE PAPER
+@route ["OPTIONS"] "/api/delete" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/delete" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        data = JSON3.read(req.body)
+        paper_id = safe_parse_int(data.id)
+        
+        db = SQLite.DB(DB_PATH)
+        
+        # 1. Fetch PDF path to delete the physical file
+        cursor = DBInterface.execute(db, "SELECT pdf_path FROM papers WHERE id = ?", (paper_id,))
+        if !isempty(cursor)
+            pdf_path = first(cursor).pdf_path
+            if !ismissing(pdf_path) && isfile(pdf_path)
+                rm(pdf_path, force=true)
+                println("🗑️ Deleted physical PDF file: ", pdf_path)
+            end
+        end
+        
+        # 2. Wipe from database completely
+        SQLite.execute(db, "DELETE FROM paper_authors WHERE paper_id = ?", (paper_id,))
+        SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (paper_id,))
+        SQLite.execute(db, "DELETE FROM papers WHERE id = ?", (paper_id,))
+        
+        println("💀 Permanently deleted paper ID $paper_id")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Delete Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to delete\"}")
+    end
+end
 @route ["OPTIONS"] "/api/move" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
 end
