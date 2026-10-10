@@ -314,22 +314,9 @@
 
        <!-- CITE TAB -->
         <div id="pref-tab-cite" class="hidden">
-          <h3 class="font-bold text-slate-700 text-sm mb-2">Word Processor Plugins</h3>
-          <div class="space-y-3 mb-6">
-            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
-              <div class="flex items-center gap-3"><i class="fa-brands fa-microsoft text-blue-600 text-xl"></i><div><div class="font-bold text-xs text-slate-800">Microsoft Word</div></div></div>
-              <button onclick="installPlugin('word')" class="bg-white border border-slate-300 text-slate-700 font-bold py-1 px-3 rounded text-xs">Install</button>
-            </div>
-            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200">
-              <div class="flex items-center gap-3"><i class="fa-solid fa-file-word text-blue-500 text-xl"></i><div><div class="font-bold text-xs text-slate-800">LibreOffice</div></div></div>
-              <button onclick="installPlugin('libreoffice')" class="bg-white border border-slate-300 text-slate-700 font-bold py-1 px-3 rounded text-xs">Install</button>
-            </div>
-          </div>
-
-          <!-- NEW: BROWSER CONNECTORS SECTION (ZOTERO STYLE) -->
           <h3 class="font-bold text-slate-700 text-sm mb-1">Browser Connectors</h3>
           <p class="text-xs text-slate-500 mb-3 leading-relaxed">
-            Install browser connectors to save papers, DOIs, and PDFs directly to Jucite with one click.
+            Install browser connectors to save papers, DOIs, and PDFs directly to Jucite, and to enable the Google Docs integration.
           </p>
 
           <div class="space-y-3">
@@ -339,7 +326,7 @@
                 <i class="fa-brands fa-chrome text-yellow-500 text-2xl"></i>
                 <div>
                   <div class="font-bold text-xs text-slate-800">Google Chrome / Brave</div>
-                  <div class="text-[10px] text-slate-500">Manifest V3 Connector</div>
+                  <div class="text-[10px] text-slate-500">Includes Google Docs Plugin</div>
                 </div>
               </div>
               <button onclick="installChromeConnector()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow-sm transition">
@@ -353,7 +340,7 @@
                 <i class="fa-brands fa-firefox-browser text-orange-500 text-2xl"></i>
                 <div>
                   <div class="font-bold text-xs text-slate-800">Mozilla Firefox</div>
-                  <div class="text-[10px] text-slate-500">Firefox WebExtension</div>
+                  <div class="text-[10px] text-slate-500">Includes Google Docs Plugin</div>
                 </div>
               </div>
               <button onclick="installFirefoxConnector()" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow-sm transition">
@@ -497,9 +484,66 @@
       localStorage.setItem('jucite_author_name', myAuthorName);
     }
 
+    // --- SMART PDF & TXT IMPORT ENGINE ---
     function handleImport(event) {
       const file = event.target.files[0];
-      if (file) alert(`Importing ${file.name}...\n\n(Parsing BibTeX/RIS logic activated)`);
+      if (!file) return;
+
+      const isPDF = file.name.toLowerCase().endsWith('.pdf');
+      const reader = new FileReader();
+      
+      reader.onload = function(e) {
+        let text = e.target.result;
+        
+        // ZOTERO LOGIC: If it's a PDF, only scan the first 3000 bytes (the PDF header/metadata).
+        // This prevents scanning the 140 references at the bottom of the document!
+        if (isPDF) {
+          text = text.substring(0, 3000);
+        }
+        
+        const doiRegex = /\b(10\.\d{4,9}\/[-._;()/:A-Z0-9]+)\b/gi;
+        const matches = text.match(doiRegex);
+        
+        if (!matches || matches.length === 0) {
+          alert(isPDF ? "Could not find a DOI in the PDF header metadata." : "No DOIs found in the file.");
+          return;
+        }
+
+        // Clean up punctuation
+        let uniqueDois = [...new Set(matches.map(d => d.replace(/[.,;()]+$/, "")))];
+        
+        // If it's a PDF, strictly grab ONLY the first DOI (the main paper)
+        if (isPDF) {
+          uniqueDois = [uniqueDois[0]];
+        }
+        
+        if (confirm(`Found ${uniqueDois.length} paper(s) to import from ${file.name}. \n\nClick OK to fetch metadata and add to library.`)) {
+          document.getElementById('search').value = "Importing..."; // Visual feedback
+          
+          let promises = uniqueDois.map(doi => {
+            return fetch('/api/save', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({ doi: doi, collection_id: activeCollectionId })
+            }).then(res => res.json());
+          });
+
+          Promise.all(promises).then(results => {
+            const successCount = results.filter(r => r.status === "saved").length;
+            document.getElementById('search').value = "";
+            alert(`✅ Import Complete!\n\nSuccessfully imported ${successCount} paper(s).`);
+            loadLibrary(); // Refresh UI
+          }).catch(err => {
+            document.getElementById('search').value = "";
+            alert("Error during import.");
+            loadLibrary();
+          });
+        }
+      };
+      
+      // Read the file as text so our Regex can scan it
+      reader.readAsText(file);
+      event.target.value = ''; // Reset file input
     }
 
     function saveNote() {

@@ -205,7 +205,7 @@ end
     ], "")
 end
 # ======================================================
-# --- FLEXIBLE & BULLETPROOF GOOGLE DRIVE UPLOADER ---
+# --- COLLABORATIVE GOOGLE DRIVE CLOUD UPLOADER ---
 # ======================================================
 
 function safe_str(val)
@@ -220,45 +220,52 @@ function safe_str(val)
     end
 end
 
-function get_drive_folder_id(folder_name::String, parent_id::String, token::String)
+# UNIVERSAL SAFE SEARCH ENGINE FOR FILES AND FOLDERS
+function get_drive_id(name::String, is_folder::Bool, parent_id::String, token::String)
     url = "https://www.googleapis.com/drive/v3/files"
-    encoded_name = replace(folder_name, "'" => "%27")
-    query = "name = '$(encoded_name)' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    if !isempty(parent_id) query *= " and '$(parent_id)' in parents" end
     
-    full_url = "$url?q=$(replace(query, " " => "%20"))&fields=files(id)"
+    # Escape single quotes specifically for Google Drive Query syntax
+    safe_name = replace(name, "'" => "\\'")
+    
+    query = "name = '$(safe_name)' and trashed = false"
+    if is_folder
+        query *= " and mimeType = 'application/vnd.google-apps.folder'"
+    end
+    if !isempty(parent_id)
+        query *= " and '$(parent_id)' in parents"
+    end
+    
+    # Safely URL-Encode the query so characters like &, +, and spaces never crash it!
+    full_url = "$url?q=$(HTTP.URIs.escapeuri(query))&fields=files(id)"
+    
     try
         res = HTTP.get(full_url, ["Authorization" => "Bearer $token"]; status_exception=false)
         if res.status == 200
             json_res = JSON3.read(res.body)
-            if haskey(json_res, :files) && !isempty(json_res.files) return String(json_res.files[1].id) end
+            if haskey(json_res, :files) && !isempty(json_res.files)
+                return safe_str(json_res.files[1].id)
+            end
         end
     catch e end
     return ""
 end
-
-# NEW: Function to check if a FILE already exists to prevent duplicates!
-function get_drive_file_id(file_name::String, parent_id::String, token::String)
-    url = "https://www.googleapis.com/drive/v3/files"
-    encoded_name = replace(file_name, "'" => "%27")
-    query = "name = '$(encoded_name)' and trashed = false"
-    if !isempty(parent_id) query *= " and '$(parent_id)' in parents" end
-    
-    full_url = "$url?q=$(replace(query, " " => "%20"))&fields=files(id)"
+# NEW: Reads the raw contents of a file directly from Google Drive API
+function read_drive_file(file_id::String, token::String)
+    url = "https://www.googleapis.com/drive/v3/files/$file_id?alt=media"
     try
-        res = HTTP.get(full_url, ["Authorization" => "Bearer $token"]; status_exception=false)
+        res = HTTP.get(url, ["Authorization" => "Bearer $token"]; status_exception=false)
         if res.status == 200
-            json_res = JSON3.read(res.body)
-            if haskey(json_res, :files) && !isempty(json_res.files) return String(json_res.files[1].id) end
+            return String(res.body)
         end
-    catch e end
+    catch e
+        println("⚠️ Failed to read drive file $file_id: ", e)
+    end
     return ""
 end
-
 function create_drive_folder(folder_name::String, parent_id, token)
     parent_str = safe_str(parent_id); tok_str = safe_str(token)
     
-    existing_id = get_drive_folder_id(folder_name, parent_str, tok_str)
+    existing_id = get_drive_id(folder_name, true, parent_str, tok_str)
     if !isempty(existing_id) return existing_id end
     
     url = "https://www.googleapis.com/drive/v3/files"
@@ -273,34 +280,40 @@ function create_drive_folder(folder_name::String, parent_id, token)
     return ""
 end
 
-function upload_file_to_drive(file_path::String, file_name::String, parent_id, mime::String, token)
+function upload_file_to_drive(file_path::String, file_name::String, parent_id, mime::String, token; overwrite=false)
     parent_str = safe_str(parent_id); tok_str = safe_str(token)
     
-    # SMART CHECK: Does the file already exist in this folder? If yes, skip it!
-    existing_id = get_drive_file_id(file_name, parent_str, tok_str)
+    existing_id = get_drive_id(file_name, false, parent_str, tok_str)
+    file_id = ""
+    
     if !isempty(existing_id)
-        println("⏭️ Skipped (Already Exists): $file_name")
-        return
+        if overwrite
+            file_id = existing_id
+        else
+            println("⏭️ Skipped (Already Exists): $file_name")
+            return
+        end
+    else
+        url_create = "https://www.googleapis.com/drive/v3/files"
+        headers = ["Authorization" => "Bearer $tok_str", "Content-Type" => "application/json"]
+        meta_dict = Dict{String, Any}("name" => file_name)
+        if !isempty(parent_str) meta_dict["parents"] = [parent_str] end
+        
+        try
+            res_meta = HTTP.post(url_create, headers, JSON3.write(meta_dict); status_exception=false)
+            if res_meta.status == 200
+                file_id = safe_str(JSON3.read(res_meta.body).id)
+            else return end
+        catch e return end
     end
     
-    url_create = "https://www.googleapis.com/drive/v3/files"
-    headers = ["Authorization" => "Bearer $tok_str", "Content-Type" => "application/json"]
-    meta_dict = Dict{String, Any}("name" => file_name)
-    if !isempty(parent_str) meta_dict["parents"] = [parent_str] end
-    
     try
-        res_meta = HTTP.post(url_create, headers, JSON3.write(meta_dict); status_exception=false)
-        if res_meta.status != 200 return end
-        
-        file_id = safe_str(JSON3.read(res_meta.body).id)
         url_upload = "https://www.googleapis.com/upload/drive/v3/files/$file_id?uploadType=media"
-        
         HTTP.patch(url_upload, ["Authorization" => "Bearer $tok_str", "Content-Type" => mime], read(file_path); status_exception=false)
         println("✅ Uploaded: $file_name")
     catch e end
 end
-
-# --- MAIN SYNC ENDPOINT ---
+# --- MAIN COLLABORATIVE SYNC ENDPOINT ---
 @get "/api/sync/drive" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     
@@ -311,9 +324,11 @@ end
     end
     
     if isempty(access_token) return HTTP.Response(400, headers, "{\"status\": \"error\", \"message\": \"Google Drive not linked.\"}") end
-    println("☁️ Authenticating and uploading to Google Drive...")
+    println("☁️ Starting Two-Way Collaborative Sync with Google Drive...")
     
     try
+        db = SQLite.DB(DB_PATH)
+        
         root_id = create_drive_folder("Jucite Library", "", access_token)
         my_lib_id = create_drive_folder("My Library", root_id, access_token)
         groups_id = create_drive_folder("Group Libraries", root_id, access_token)
@@ -321,57 +336,115 @@ end
         temp_dir = joinpath(homedir(), "Jucite_Temp_Upload")
         mkpath(temp_dir)
         
-        db = SQLite.DB(DB_PATH)
-        df_papers = DBInterface.execute(db, "SELECT id, title, year, journal, doi, pdf_path FROM papers") |> DataFrame
+        # 1. PULL (DOWN-SYNC): Check cloud groups for new papers from teammates!
+        cursor_groups = DBInterface.execute(db, "SELECT id, name FROM collections WHERE is_group = 1")
+        for g_row in eachrow(DataFrame(cursor_groups))
+            group_id = g_row.id
+            clean_group_name = replace(g_row.name, r"[^a-zA-Z0-9_\-\s]" => "_")
+            
+            # FIXED: Using the new unified get_drive_id function
+            cloud_g_id = get_drive_id(clean_group_name, true, groups_id, access_token)
+            if !isempty(cloud_g_id)
+                index_id = get_drive_id("group_index.json", false, cloud_g_id, access_token)
+                if !isempty(index_id)
+                    cloud_json = read_drive_file(index_id, access_token)
+                    if !isempty(cloud_json)
+                        println("📥 Downloading papers from teammate for group: $(g_row.name)")
+                        cloud_papers = JSON3.read(cloud_json)
+                        
+                        SQLite.transaction(db) do
+                            for p in cloud_papers
+                                # Safely extract values, converting 'nothing' or 'null' into safe defaults
+                                p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
+                                p_title = (haskey(p, :title) && p.title !== nothing) ? string(p.title) : "Unknown"
+                                
+                                if isempty(p_doi) continue end
+                                
+                                # Safe Year extraction
+                                y_val = get(p, :year, 0)
+                                p_year = 0
+                                if y_val !== nothing && !ismissing(y_val)
+                                    p_year = y_val isa Number ? Int(y_val) : (tryparse(Int, string(y_val)) !== nothing ? parse(Int, string(y_val)) : 0)
+                                end
+                                
+                                # Safe Journal extraction
+                                j_val = get(p, :journal, "")
+                                p_journal = (j_val !== nothing && !ismissing(j_val)) ? string(j_val) : ""
+                                
+                                # Insert paper into local DB if missing
+                                stmt_p = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal) VALUES (?, ?, ?, ?)")
+                                SQLite.execute(stmt_p, (p_title, p_doi, p_year, p_journal))
+                                
+                                # Get ID and link to group
+                                c_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
+                                if !isempty(c_paper)
+                                    pid = first(c_paper).id
+                                    stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
+                                    SQLite.execute(stmt_link, (group_id, pid))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        # 2. PUSH (UP-SYNC): Upload our active library to the cloud
+        df_papers = DBInterface.execute(db, "SELECT id, title, year, journal, doi, pdf_path FROM papers WHERE trashed IS NULL OR trashed = 0") |> DataFrame
         
+        group_indexes = Dict{String, Vector{Any}}()
         item_count = 0
+        
         for row in eachrow(df_papers)
+            # FIXED: Safe year extraction for missing values
+            year_str = ismissing(row.year) || row.year == 0 ? "UnknownYear" : string(row.year)
             
-            # THE FIX: A strict, aggressive filename scrubber!
-            # Removes HTML tags, newlines, tabs, and limits strictly to alphanumeric, dashes, and spaces.
-            safe_title = replace(row.title, r"<[^>]*>" => "") # Strip HTML tags like <i>
-            safe_title = replace(safe_title, r"&[a-zA-Z]+;" => "") # Strip HTML entities like &amp;
-            safe_title = replace(safe_title, r"[\n\r\t]" => " ") # Remove hidden line breaks
-            safe_title = replace(safe_title, r"[^a-zA-Z0-9\-\s]" => "") # Remove all weird symbols
-            safe_title = replace(safe_title, r"\s+" => "_") # Convert spaces to underscores
-            
-            # Ensure it is exactly 50 characters max so Google search doesn't truncate it
-            safe_title = safe_title[1:min(length(safe_title), 50)]
-            
-            # Clean up trailing underscores
+            safe_title = replace(row.title, r"<[^>]*>" => "")
+            safe_title = replace(safe_title, r"&[a-zA-Z]+;" => "")
+            safe_title = replace(safe_title, r"[\n\r\t]" => " ")
+            safe_title = replace(safe_title, r"[^a-zA-Z0-9\-\s]" => "")
+            safe_title = replace(safe_title, r"\s+" => "_")[1:min(length(safe_title), 50)]
             safe_title = replace(safe_title, r"_+$" => "")
             
-            filename_base = "$(row.year)_$(safe_title)"
+            filename_base = "$(year_str)_$(safe_title)"
             
             cursor_group = DBInterface.execute(db, "SELECT c.name FROM collections c JOIN collection_papers cp ON c.id = cp.collection_id WHERE cp.paper_id = ? AND c.is_group = 1 LIMIT 1", (row.id,))
             df_group = DataFrame(cursor_group)
             
             target_cloud_id = my_lib_id
             if nrow(df_group) > 0
-                target_cloud_id = create_drive_folder(df_group.name[1], groups_id, access_token)
+                group_name = df_group.name[1]
+                target_cloud_id = create_drive_folder(group_name, groups_id, access_token)
+                
+                if !haskey(group_indexes, group_name) group_indexes[group_name] = [] end
+                push!(group_indexes[group_name], Dict("title" => row.title, "doi" => row.doi, "year" => row.year, "journal" => row.journal))
             end
             
             has_pdf = !ismissing(row.pdf_path) && !isempty(row.pdf_path) && isfile(row.pdf_path)
-            
             if has_pdf
-                upload_file_to_drive(row.pdf_path, "$(filename_base).pdf", target_cloud_id, "application/pdf", access_token)
+                upload_file_to_drive(row.pdf_path, "$(filename_base).pdf", target_cloud_id, "application/pdf", access_token; overwrite=false)
             else
-                authors = get_paper_authors(db, row.id)
-                author_str = isempty(authors) ? "Unknown" : join(authors, ", ")
-                metadata_content = "Title: $(row.title)\nAuthors: $author_str\nJournal: $(row.journal)\nYear: $(row.year)\nDOI: $(row.doi)"
-                
                 txt_path = joinpath(temp_dir, "$(filename_base)_Metadata.txt")
-                write(txt_path, metadata_content)
-                upload_file_to_drive(txt_path, "$(filename_base)_Metadata.txt", target_cloud_id, "text/plain", access_token)
+                write(txt_path, "Title: $(row.title)\nDOI: $(row.doi)")
+                upload_file_to_drive(txt_path, "$(filename_base)_Metadata.txt", target_cloud_id, "text/plain", access_token; overwrite=false)
             end
             item_count += 1
         end
         
+        # 3. OVERWRITE GROUP JSON FILES IN CLOUD
+        for (g_name, g_papers) in group_indexes
+            g_cloud_id = create_drive_folder(g_name, groups_id, access_token)
+            json_path = joinpath(temp_dir, "group_index.json")
+            write(json_path, JSON3.write(g_papers))
+            upload_file_to_drive(json_path, "group_index.json", g_cloud_id, "application/json", access_token; overwrite=true)
+        end
+        
         rm(temp_dir, recursive=true, force=true)
-        println("✅ Direct Cloud Sync Complete!")
+        println("✅ Collaborative Cloud Sync Complete!")
         return HTTP.Response(200, headers, JSON3.write(Dict("status" => "success", "message" => "Sync complete! No duplicates!")))
         
     catch e
+        println("❌ Sync Error: ", e)
         return HTTP.Response(500, headers, "{\"status\": \"error\", \"message\": \"Sync Failed.\"}")
     end
 end
@@ -769,7 +842,38 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to move\"}")
     end
 end
+# 4. EMPTY ENTIRE TRASH
+@route ["OPTIONS"] "/api/trash/empty" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
 
+@post "/api/trash/empty" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    try
+        db = SQLite.DB(DB_PATH)
+        
+        # 1. Fetch all trashed papers to delete their physical PDFs
+        cursor = DBInterface.execute(db, "SELECT id, pdf_path FROM papers WHERE trashed = 1")
+        for row in DataFrame(cursor)
+            if !ismissing(row.pdf_path) && isfile(row.pdf_path)
+                rm(row.pdf_path, force=true)
+                println("🗑️ Deleted physical PDF file: ", row.pdf_path)
+            end
+            # Delete relational data
+            SQLite.execute(db, "DELETE FROM paper_authors WHERE paper_id = ?", (row.id,))
+            SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (row.id,))
+        end
+        
+        # 2. Wipe them from the papers table
+        SQLite.execute(db, "DELETE FROM papers WHERE trashed = 1")
+        
+        println("💀 Emptied entire Trash folder.")
+        return HTTP.Response(200, headers, "{\"status\": \"success\"}")
+    catch e
+        println("❌ Empty Trash Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to empty trash\"}")
+    end
+end
 # ======================================================
 # --- SERVER ENDPOINTS & API SUITE ---
 # ======================================================
@@ -802,6 +906,49 @@ end
         push!(papers_list, Dict("id" => row.id, "title" => row.title, "year" => row.year, "journal" => row.journal, "pdf_path" => row.pdf_path, "authors" => csl_authors, "doi" => ismissing(row.doi) ? "" : row.doi))
     end
     return papers_list
+end
+# ======================================================
+# --- 10,000+ CSL STYLE SEARCH ENGINE ---
+# ======================================================
+
+@route ["OPTIONS"] "/api/styles/search" function(req::HTTP.Request)
+    return HTTP.Response(200, [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true"
+    ], "")
+end
+
+@get "/api/styles/search" function(req::HTTP.Request)
+    params = queryparams(req)
+    query = lowercase(get(params, "q", ""))
+    
+    headers = [
+        "Access-Control-Allow-Origin" => "*",
+        "Access-Control-Allow-Methods" => "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers" => "*",
+        "Access-Control-Allow-Private-Network" => "true",
+        "Content-Type" => "application/json"
+    ]
+    
+    if isempty(query)
+        return HTTP.Response(200, headers, "[]")
+    end
+    
+    catalog = load_or_fetch_style_catalog()
+    
+    results = []
+    count = 0
+    for style in catalog
+        if contains(lowercase(String(style["title"])), query) || contains(lowercase(String(style["name"])), query)
+            push!(results, style)
+            count += 1
+            if count >= 15 break end # Limit to top 15 results for speed
+        end
+    end
+    
+    return HTTP.Response(200, headers, JSON3.write(results))
 end
 
 # 2. LAUNCH LOCAL PDF
@@ -876,62 +1023,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
     end
 end
-# ======================================================
-# --- NATIVE LIBREOFFICE FLOATING SIDEBAR ENGINE ---
-# ======================================================
 
-# FIX: Changed to Channel{Any}(1) so Symbol vs String keys never clash!
-const LIBRE_CHANNEL = Channel{Any}(1)
-
-@get "/libreoffice" function()
-    return file("src/html/libreoffice.html")
-end
-
-
-# 1. Trigger Floating Sidebar Window
-@get "/api/libreoffice/trigger" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    
-    # Launch floating Electron sidebar window
-    opts = Dict(
-        "title" => "Jucite Citation Manager",
-        "width" => 350,
-        "height" => 680,
-        "alwaysOnTop" => true,
-        "autoHideMenuBar" => true,
-        "webPreferences" => Dict("nodeIntegration" => true)
-    )
-    
-    w = Window(opts)
-    Blink.loadurl(w, "http://127.0.0.1:8080/libreoffice")
-    
-    # Clear any old actions in the channel before waiting
-    while isready(LIBRE_CHANNEL)
-        take!(LIBRE_CHANNEL)
-    end
-    
-    # Wait for the user to click a paper in the floating sidebar!
-    action_data = take!(LIBRE_CHANNEL)
-    
-    # Auto-close the floating window after click
-    try close(w) catch end
-    
-    return HTTP.Response(200, headers, JSON3.write(action_data))
-end
-
-# 2. Capture Sidebar Click
-@route ["OPTIONS"] "/api/libreoffice/action" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
-end
-
-@post "/api/libreoffice/action" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    data = json(req)
-    
-    # Send user click data directly to the waiting LibreOffice process!
-    put!(LIBRE_CHANNEL, data)
-    return HTTP.Response(200, headers, "{\"status\": \"sent\"}")
-end
 # --- SEARCH & FORMATTING ENGINE ---
 @route ["OPTIONS"] "/api/search" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "GET, POST, OPTIONS", "Access-Control-Allow-Headers" => "*", "Access-Control-Allow-Private-Network" => "true"], "")
@@ -1006,33 +1098,6 @@ end
     return HTTP.Response(200, headers, JSON3.write(Dict("in_text" => in_text, "bibliography" => bibliography, "style" => style, "paper_id" => id)))
 end
 
-@route ["OPTIONS"] "/api/install-plugin" function(req::HTTP.Request)
-    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
-end
-
-@post "/api/install-plugin" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    try
-        data = json(req)
-        plugin_type = get(data, "type", "")
-        if plugin_type == "word"
-            if Sys.iswindows() || Sys.isapple()
-                return HTTP.Response(200, headers, "{\"message\": \"Microsoft Word add-in installed successfully! Please restart Word.\"}")
-            else
-                return HTTP.Response(400, headers, "{\"error\": \"Microsoft Word is not natively supported on Linux. Please install LibreOffice or use Google Docs.\"}")
-            end
-        elseif plugin_type == "libreoffice"
-            println("⚙️ Installing LibreOffice Plugin via unopkg...")
-            return HTTP.Response(200, headers, "{\"message\": \"LibreOffice add-in installed successfully! Please restart LibreOffice.\"}")
-        end
-    catch e
-        return HTTP.Response(500, headers, "{\"error\": \"Installation failed.\"}")
-    end
-end
-
-# ======================================================
-# --- STANDALONE DESKTOP LAUNCHER ---
-# ======================================================
 # ======================================================
 # --- STANDALONE DESKTOP LAUNCHER ---
 # ======================================================
