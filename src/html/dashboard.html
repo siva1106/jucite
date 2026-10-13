@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jucite Desktop</title>
+  <title>Jucite Reference Manager</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
@@ -23,14 +23,22 @@
   </style>
 </head>
 <body class="text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
-
+<!-- JUCITE LOADING SPLASH SCREEN -->
+  <div id="splash-screen" class="fixed inset-0 bg-slate-50 z-[9999] flex flex-col items-center justify-center transition-opacity duration-500">
+    <img src="/assets/logo.png" alt="Jucite Logo" class="h-32 w-auto animate-pulse mb-4 drop-shadow-md">
+    <div class="text-indigo-900 font-extrabold text-xl tracking-tight">Jucite Reference Manager</div>
+  </div>
   <!-- HIDDEN IMPORT FILE INPUT -->
   <input type="file" id="importFileInput" accept=".json,.txt" class="hidden" onchange="handleImport(event)">
 
-  <!-- TOP MENU BAR -->
-  <div class="bg-slate-50 border-b border-slate-200 flex items-center px-3 py-1.5 text-xs text-slate-700 relative z-40">
-    <div class="font-bold text-indigo-700 mr-4 flex items-center gap-1"><i class="fa-solid fa-layer-group"></i> Jucite</div>
+ <!-- TOP MENU BAR -->
+  <div class="bg-slate-50 border-b border-slate-200 flex items-center px-3 py-2 text-xs text-slate-700 relative z-40">
     
+    <!-- BRANDING LOGO (Cleaned and Enlarged) -->
+    <div class="font-extrabold text-[#112558] mr-6 flex items-center gap-2.5 text-[15px] tracking-tight">
+      <img src="/assets/logo.png" alt="Jucite Logo" class="h-9 w-auto drop-shadow-sm">
+      Jucite
+    </div> 
     <div class="relative">
       <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'file-menu')">File</div>
       <div id="file-menu" class="dropdown-menu">
@@ -315,36 +323,22 @@
        <!-- CITE TAB -->
         <div id="pref-tab-cite" class="hidden">
           <h3 class="font-bold text-slate-700 text-sm mb-1">Browser Connectors</h3>
-          <p class="text-xs text-slate-500 mb-3 leading-relaxed">
+          <p class="text-xs text-slate-500 mb-4 leading-relaxed">
             Install browser connectors to save papers, DOIs, and PDFs directly to Jucite, and to enable the Google Docs integration.
           </p>
 
           <div class="space-y-3">
-            <!-- Chrome & Brave Connector -->
-            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200 hover:border-slate-300 transition">
+            <!-- Chrome & Brave Connector ONLY -->
+            <div class="flex items-center justify-between bg-slate-50 p-3.5 rounded-lg border border-slate-200 hover:border-slate-300 transition">
               <div class="flex items-center gap-3">
                 <i class="fa-brands fa-chrome text-yellow-500 text-2xl"></i>
                 <div>
-                  <div class="font-bold text-xs text-slate-800">Google Chrome / Brave</div>
-                  <div class="text-[10px] text-slate-500">Includes Google Docs Plugin</div>
+                  <div class="font-bold text-[13px] text-slate-800">Google Chrome</div>
+                  <div class="text-[11px] text-slate-500">Includes Google Docs Plugin</div>
                 </div>
               </div>
-              <button onclick="installChromeConnector()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow-sm transition">
+              <button onclick="installChromeConnector()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-4 rounded text-xs shadow-sm transition">
                 Install Connector
-              </button>
-            </div>
-
-            <!-- Firefox Connector -->
-            <div class="flex items-center justify-between bg-slate-50 p-3 rounded-lg border border-slate-200 hover:border-slate-300 transition">
-              <div class="flex items-center gap-3">
-                <i class="fa-brands fa-firefox-browser text-orange-500 text-2xl"></i>
-                <div>
-                  <div class="font-bold text-xs text-slate-800">Mozilla Firefox</div>
-                  <div class="text-[10px] text-slate-500">Includes Google Docs Plugin</div>
-                </div>
-              </div>
-              <button onclick="installFirefoxConnector()" class="bg-orange-600 hover:bg-orange-700 text-white font-bold py-1.5 px-3 rounded text-xs shadow-sm transition">
-                Install Add-on
               </button>
             </div>
           </div>
@@ -372,7 +366,21 @@
     }
 
     function loadLibrary() {
-      fetch('/api/library').then(res => res.json()).then(data => { allPapers = data; renderPapers(allPapers); });
+      fetch('/api/library')
+        .then(res => res.json())
+        .then(data => { 
+          allPapers = data; 
+          renderPapers(allPapers); 
+          
+          // REMOVE THE LOGO SPLASH SCREEN ONCE LOADED
+          setTimeout(() => {
+            const splash = document.getElementById('splash-screen');
+            if(splash) {
+              splash.style.opacity = '0';
+              setTimeout(() => splash.style.display = 'none', 500); // Wait for fade out
+            }
+          }, 400); // 400ms delay to make it feel smooth
+        });
       loadCollections();
       if(myAuthorName) document.getElementById('user-author-name').value = myAuthorName;
     }

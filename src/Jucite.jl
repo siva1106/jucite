@@ -354,35 +354,28 @@ end
                         
                         SQLite.transaction(db) do
                             for p in cloud_papers
-                                # Safely extract values, converting 'nothing' or 'null' into safe defaults
-                                p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
-                                p_title = (haskey(p, :title) && p.title !== nothing) ? string(p.title) : "Unknown"
+                            p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
+                            if isempty(p_doi) continue end
+                            
+                            # Check if User B already has this paper locally
+                            c_check = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
+                            
+                            if isempty(c_check)
+                                println("📥 New paper found from teammate! Auto-fetching PDF for: ", p_doi)
                                 
-                                if isempty(p_doi) continue end
-                                
-                                # Safe Year extraction
-                                y_val = get(p, :year, 0)
-                                p_year = 0
-                                if y_val !== nothing && !ismissing(y_val)
-                                    p_year = y_val isa Number ? Int(y_val) : (tryparse(Int, string(y_val)) !== nothing ? parse(Int, string(y_val)) : 0)
+                                # Let Jucite do the heavy lifting! Fetch metadata & download PDF automatically for User B!
+                                paper_info = fetch_metadata(p_doi)
+                                if paper_info !== nothing
+                                    # Save it and link it to the shared group!
+                                    save_paper(paper_info, group_id)
                                 end
-                                
-                                # Safe Journal extraction
-                                j_val = get(p, :journal, "")
-                                p_journal = (j_val !== nothing && !ismissing(j_val)) ? string(j_val) : ""
-                                
-                                # Insert paper into local DB if missing
-                                stmt_p = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal) VALUES (?, ?, ?, ?)")
-                                SQLite.execute(stmt_p, (p_title, p_doi, p_year, p_journal))
-                                
-                                # Get ID and link to group
-                                c_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
-                                if !isempty(c_paper)
-                                    pid = first(c_paper).id
-                                    stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
-                                    SQLite.execute(stmt_link, (group_id, pid))
-                                end
+                            else
+                                # If User B already has the paper, just make sure it's linked to the group
+                                pid = first(c_check).id
+                                stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
+                                SQLite.execute(stmt_link, (group_id, pid))
                             end
+                        end
                         end
                     end
                 end
@@ -881,6 +874,8 @@ end
 @get "/" function()
     return file("src/html/dashboard.html")
 end
+# NEW: Serve the official Jucite logo
+@get "/assets/logo.png" function() return file("src/assets/logo.png") end
 
 # 1. LIBRARY ENDPOINT (WITH TRASH & GROUP FILTERING)
 @get "/api/library" function(req::HTTP.Request)
@@ -1114,23 +1109,25 @@ function launch_desktop_app()
     sleep(1.0)
     
     println("🖥️ Launching Jucite Native Desktop Window...")
-    
-    # 2. Create the Native Desktop Window using Blink (Electron)
+  # 2. Create the Native Desktop Window using Blink (Electron)
     opts = Dict(
         "title" => "Jucite Reference Manager",
+        # Use your custom logo for the Linux Taskbar and window icon!
+        "icon" => joinpath(pwd(), "src", "assets", "logo.png"), 
         "width" => 1200,
         "height" => 800,
         "minWidth" => 800,
         "minHeight" => 600,
         "autoHideMenuBar" => true,
+        # FIX THE BLACK BOX: Pre-fill window with the exact Tailwind background color
+        "backgroundColor" => "#f8fafc", 
         "webPreferences" => Dict("nodeIntegration" => true)
     )
     
     w = Window(opts)
     Blink.loadurl(w, "http://127.0.0.1:8080/")
     
-    println("✅ Jucite Desktop is running!")
-    
+    println("✅ Jucite Desktop is running!")    
     wait() 
 end
 end # <----- YOU NEED THIS 'end' TO CLOSE THE MODULE!
