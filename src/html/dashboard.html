@@ -61,10 +61,18 @@
       </div>
     </div>
 
+    <!-- TOOLS MENU -->
     <div class="relative">
       <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'tools-menu')">Tools</div>
       <div id="tools-menu" class="dropdown-menu">
         <div class="dropdown-item" onclick="triggerGoogleDriveSync()"><i class="fa-brands fa-google-drive text-blue-500 w-4"></i> Sync to Google Drive</div>
+      </div>
+    </div>
+
+    <!-- HOW TO USE BUTTON (TOP LEVEL) -->
+    <div class="px-3 py-1 hover:bg-indigo-50 cursor-pointer rounded transition font-bold text-indigo-700 ml-2" onclick="openManualModal()">
+      <i class="fa-solid fa-circle-question mr-1"></i> How to use
+    </div>
       </div>
     </div>
   </div>
@@ -100,9 +108,14 @@
         <div onclick="showRecentlyRead(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clock text-slate-400"></i> Recently Read</div>
         <div onclick="showMyPublications(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-file-lines text-emerald-500"></i> My Publications</div>
         <div onclick="showDuplicates(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition"><i class="fa-solid fa-clone text-amber-500"></i> Duplicate Items</div>
-        <div onclick="showTrash(this)" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-700 cursor-pointer ml-4 transition">
-  <i class="fa-solid fa-trash-can text-red-400"></i> Trash
-</div>       
+        <div onclick="showTrash(this)" id="trash-nav-btn" class="nav-item flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-200 rounded text-slate-600 cursor-pointer ml-4 transition">
+          <i class="fa-solid fa-trash-can text-red-400"></i> Trash
+        </div>
+        
+        <!-- NEW: EMPTY TRASH BUTTON -->
+        <div onclick="emptyTrash()" class="flex items-center gap-2 px-2 py-1 hover:bg-red-50 rounded text-red-500 cursor-pointer ml-8 transition text-[10px] font-bold">
+          <i class="fa-solid fa-fire text-red-400"></i> Empty Trash
+        </div>
 <div id="collections-list" class="pl-4 space-y-0.5 mt-2"></div>
         <hr class="border-slate-200 my-3">
         <div class="px-2 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider flex justify-between items-center">
@@ -260,6 +273,81 @@
       </div>
     </div>
   </div>
+     <!-- USER MANUAL MODAL (Standalone) -->
+  <div id="manualModal" class="hidden fixed inset-0 bg-slate-900/60 flex items-center justify-center p-4 z-50 backdrop-blur-sm transition-opacity">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl border border-slate-200 flex flex-col overflow-hidden h-[80vh]">
+      
+      <!-- Header -->
+      <div class="bg-slate-50 border-b border-slate-200 px-6 py-4 flex justify-between items-center">
+        <div class="flex items-center gap-3">
+          <i class="fa-solid fa-book-open text-indigo-600 text-xl"></i>
+          <h2 class="font-bold text-slate-800 text-lg">Jucite User Manual</h2>
+        </div>
+        <button onclick="closeManualModal()" class="text-slate-400 hover:text-slate-700 font-bold text-2xl leading-none">&times;</button>
+      </div>
+      
+      <!-- Scrollable Content -->
+      <div class="p-6 overflow-y-auto flex-1 text-slate-700 text-sm leading-relaxed space-y-6">
+        
+        <!-- Section 1: Connectors -->
+        <section>
+          <h3 class="font-bold text-indigo-700 text-base border-b border-slate-200 pb-1 mb-3"><i class="fa-solid fa-plug mr-1"></i> 1. Setup & Installation</h3>
+          <p class="mb-2">To get the most out of Jucite, you need the browser connector and the word processor plugin.</p>
+          <ul class="list-disc pl-5 space-y-2 text-slate-600">
+            <li><strong>Chrome Browser Connector:</strong> In Jucite, click <b>Edit > Preferences > Cite</b>. Click "Install Connector". This allows you to save papers and PDFs from the web with one click.</li>
+            <li><strong>Google Docs Plugin:</strong> Go to the Google Workspace Marketplace (Extensions > Add-ons inside Google Docs) and install "Jucite Reference Manager". This provides the dynamic citation sidebar.</li>
+          </ul>
+        </section>
+
+        <!-- Section 2: Adding Papers -->
+        <section>
+          <h3 class="font-bold text-indigo-700 text-base border-b border-slate-200 pb-1 mb-3"><i class="fa-solid fa-file-circle-plus mr-1"></i> 2. Adding Papers to your Library</h3>
+          <ul class="list-disc pl-5 space-y-2 text-slate-600">
+            <li><strong>By Identifier:</strong> Click the Magic Wand icon (<i class="fa-solid fa-wand-magic-sparkles text-purple-500"></i>) and paste a DOI. Jucite will fetch the metadata and open-access PDF automatically.</li>
+            <li><strong>Via Browser:</strong> Click the Jucite icon in your Chrome extensions bar while viewing a journal article to save it instantly.</li>
+          </ul>
+        </section>
+
+        <!-- Section 3: Group Libraries & Collaboration -->
+        <section>
+          <h3 class="font-bold text-indigo-700 text-base border-b border-slate-200 pb-1 mb-3"><i class="fa-solid fa-users mr-1"></i> 3. Group Libraries & Google Drive Collaboration</h3>
+          <p class="mb-2">Jucite uses a serverless, decentralized sharing architecture powered entirely by your personal Google Drive. You can collaborate with teammates for free.</p>
+          
+          <div class="bg-blue-50 border border-blue-200 rounded p-4 mt-2">
+            <h4 class="font-bold text-blue-800 mb-2">Step A: Creating & Sharing a Group (For the Admin)</h4>
+            <ol class="list-decimal pl-4 space-y-1 text-blue-900 text-xs">
+              <li>Click the <b>New Group Library</b> button and name it (e.g., <i>LabProject</i>).</li>
+              <li>Add your papers to this new group.</li>
+              <li>Click the green <b>Sync Icon</b> to upload the group to your Google Drive.</li>
+              <li>Open your web browser and go to <code>drive.google.com</code>.</li>
+              <li>Navigate to <b>Google_Drive_Jucite > Group Libraries > LabProject</b>.</li>
+              <li>Right-click the <i>LabProject</i> folder, click <b>Share</b>, and enter your teammate's email address.</li>
+            </ol>
+          </div>
+
+          <div class="bg-emerald-50 border border-emerald-200 rounded p-4 mt-3">
+            <h4 class="font-bold text-emerald-800 mb-2">Step B: Joining & Syncing a Group (For the Teammate)</h4>
+            <ol class="list-decimal pl-4 space-y-1 text-emerald-900 text-xs">
+              <li>Go to <code>drive.google.com</code> and click <b>"Shared with me"</b> on the left menu.</li>
+              <li>Find the shared <i>LabProject</i> folder. Right-click it and select <b>Organize > Add Shortcut</b>.</li>
+              <li>Place the shortcut exactly inside your own <b>Google_Drive_Jucite > Group Libraries</b> folder.</li>
+              <li>Open your Jucite Desktop App. Create a New Group Library and name it exactly <b>LabProject</b>.</li>
+              <li>Click the green <b>Sync Icon</b>. Jucite will detect your teammate's files, download their papers, and automatically fetch the PDFs to your computer!</li>
+            </ol>
+          </div>
+        </section>
+
+      </div>
+      
+      <!-- Footer -->
+      <div class="bg-slate-50 border-t border-slate-200 px-6 py-3 flex justify-end">
+        <button onclick="closeManualModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-md shadow-sm transition">Got it!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- THE SCRIPT TAG MUST BE RIGHT HERE BELOW THE MODAL -->
+   
   <!-- PREFERENCES MODAL (WITH GOOGLE DRIVE SYNC MANAGER) -->
   <div id="prefsModal" class="hidden fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
     <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 flex overflow-hidden h-[450px]">
@@ -341,8 +429,11 @@
                 Install Connector
               </button>
             </div>
-          </div>
         </div>
+      </div>
+    </div>
+  </div>
+  
   <script>
     let allPapers = [];
     let activeCollectionId = 0;
@@ -365,26 +456,57 @@
       document.getElementById(`${tabName}-pane`).classList.remove('hidden');
     }
 
+    let lastKnownPaperCount = -1;
+    let isPolling = false;
+
+    // --- CORE LIBRARY LOADING ---
     function loadLibrary() {
       fetch('/api/library')
         .then(res => res.json())
         .then(data => { 
           allPapers = data; 
+          lastKnownPaperCount = data.length; // Save the count!
           renderPapers(allPapers); 
           
-          // REMOVE THE LOGO SPLASH SCREEN ONCE LOADED
+          // Remove Splash Screen on first load
           setTimeout(() => {
             const splash = document.getElementById('splash-screen');
             if(splash) {
               splash.style.opacity = '0';
-              setTimeout(() => splash.style.display = 'none', 500); // Wait for fade out
+              setTimeout(() => splash.style.display = 'none', 500);
             }
-          }, 400); // 400ms delay to make it feel smooth
+          }, 400);
+          
+          // Start the silent background watcher if not already running
+          if (!isPolling) {
+            isPolling = true;
+            setInterval(watchForNewPapers, 2000); 
+          }
         });
       loadCollections();
       if(myAuthorName) document.getElementById('user-author-name').value = myAuthorName;
     }
 
+    // --- LIVE SYNC WATCHER ---
+    // This silently checks Julia every 2 seconds. If the Chrome Extension adds a paper, 
+    // the count changes, and the UI instantly refreshes without the user clicking anything!
+    function watchForNewPapers() {
+      // Only auto-refresh if we are viewing "My Library" (ID 0)
+      if (activeCollectionId !== 0) return; 
+
+      fetch('/api/library')
+        .then(res => res.json())
+        .then(data => {
+          if (data.length !== lastKnownPaperCount) {
+            console.log("New paper detected! Auto-refreshing UI...");
+            allPapers = data;
+            lastKnownPaperCount = data.length;
+            renderPapers(allPapers);
+            loadCollections(); // Update folder counts if necessary
+          }
+        })
+        .catch(err => {}); // Ignore network errors during silent polling
+    }
     function renderPapers(papers) {
       const libraryBody = document.getElementById('library-body');
       if (!papers || papers.length === 0) {
@@ -863,7 +985,27 @@
           alert("Failed to load Trash. Error: " + err.message);
         });
     };
-    
+    // 5. EMPTY THE ENTIRE TRASH
+    window.emptyTrash = function() {
+      if(confirm("Are you SURE you want to permanently delete all items in the Trash? This cannot be undone!")) {
+        fetch('/api/trash/empty', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          if(data.status === "success") {
+            alert("Trash emptied successfully.");
+            // If we are currently viewing the trash, refresh it so it goes blank!
+            if (activeCollectionId === -1) {
+              showTrash(document.getElementById('trash-nav-btn'));
+            } else {
+              loadLibrary(); // Just reload normal library
+            }
+          } else {
+            alert("Error emptying trash.");
+          }
+        })
+        .catch(err => console.error("Network error.", err));
+      }
+    };
     // --- BROWSER CONNECTOR INSTALLERS ---
     function installChromeConnector() {
       alert("Opening Chrome Extensions Setup:\n\n1. In Chrome, enable 'Developer mode' (top right).\n2. Click 'Load unpacked' (top left).\n3. Select your 'extension' folder!");
@@ -874,6 +1016,16 @@
       alert("Opening Firefox Add-ons Setup:\n\n1. In Firefox, navigate to 'about:debugging#/runtime/this-firefox'\n2. Click 'Load Temporary Add-on...'\n3. Select your 'extension/manifest.json' file!");
       window.open('about:debugging#/runtime/this-firefox', '_blank');
     }
+    // ======================================================
+    // --- USER MANUAL MODAL ---
+    // ======================================================
+    window.openManualModal = function() {
+      document.getElementById('manualModal').classList.remove('hidden');
+    };
+
+    window.closeManualModal = function() {
+      document.getElementById('manualModal').classList.add('hidden');
+    };
   </script>
 </body>
 </html>

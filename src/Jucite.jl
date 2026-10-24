@@ -5,11 +5,14 @@ using DataFrames
 using HTTP
 using JSON3
 using Oxygen
-using Blink    # NEW: Desktop Window Manager
+using Blink
+
+# NEW: Clears old routes from memory so you never see the overwrite warnings!
+Oxygen.resetstate()
+
 const DB_PATH = "jucite_library.sqlite"
 const PDF_DIR = "pdfs"
 const STYLES_CATALOG_FILE = "styles_catalog.json"
-
 # ======================================================
 # --- LOCK-FREE DATABASE ENGINE (WAL MODE) ---
 # ======================================================
@@ -886,22 +889,25 @@ end
     try
         db = SQLite.DB(DB_PATH)
         
-        # 1. Fetch all trashed papers to delete their physical PDFs
+        # 1. Fetch all trashed papers to delete their physical PDF files
         cursor = DBInterface.execute(db, "SELECT id, pdf_path FROM papers WHERE trashed = 1")
-        for row in DataFrame(cursor)
+        
+        # FIXED: Added eachrow()!
+        for row in eachrow(DataFrame(cursor))
             if !ismissing(row.pdf_path) && isfile(row.pdf_path)
                 rm(row.pdf_path, force=true)
                 println("🗑️ Deleted physical PDF file: ", row.pdf_path)
             end
-            # Delete relational data
+            
+            # Clean up linking tables for these deleted papers
             SQLite.execute(db, "DELETE FROM paper_authors WHERE paper_id = ?", (row.id,))
             SQLite.execute(db, "DELETE FROM collection_papers WHERE paper_id = ?", (row.id,))
         end
         
-        # 2. Wipe them from the papers table
+        # 2. Wipe them from the database forever
         SQLite.execute(db, "DELETE FROM papers WHERE trashed = 1")
         
-        println("💀 Emptied entire Trash folder.")
+        println("💀 Emptied the Trash successfully!")
         return HTTP.Response(200, headers, "{\"status\": \"success\"}")
     catch e
         println("❌ Empty Trash Error: ", e)

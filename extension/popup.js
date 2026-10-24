@@ -11,31 +11,31 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   currentTab = tabs[0];
   if (!currentTab) return;
 
-  // Check URL
+  // 1. Check URL
   const urlMatch = currentTab.url.match(doiRegex);
   if (urlMatch) {
     detectedDoi = urlMatch[1].replace(/[.,;()]+$/, "");
-    statusDiv.textContent = "DOI Detected";
+    statusDiv.textContent = "DOI Detected on page.";
     return;
   }
 
-  // Scan Meta Tags
+  // 2. Scan Meta Tags safely
   chrome.scripting.executeScript({
     target: { tabId: currentTab.id },
     func: () => {
       const meta = document.querySelector('meta[name="citation_doi"], meta[name="dc.identifier"], meta[name="DOI"]');
-      return meta ? meta.content : document.documentElement.outerHTML;
+      return meta ? meta.content : "";
     }
   }, (results) => {
     if (results && results[0] && results[0].result) {
       const match = results[0].result.match(doiRegex);
       if (match) {
         detectedDoi = match[1].replace(/[.,;()]+$/, "");
-        statusDiv.textContent = "DOI Detected";
+        statusDiv.textContent = "DOI Detected in metadata.";
         return;
       }
     }
-    statusDiv.textContent = "Ready to save page/PDF";
+    statusDiv.textContent = "Ready to save web page/PDF.";
   });
 });
 
@@ -44,7 +44,7 @@ saveBtn.addEventListener('click', () => {
   if (!currentTab) return;
 
   saveBtn.disabled = true;
-  statusDiv.textContent = "Saving to Jucite...";
+  statusDiv.textContent = "Saving to Jucite Desktop...";
 
   const payload = {
     doi: detectedDoi,
@@ -59,14 +59,14 @@ saveBtn.addEventListener('click', () => {
   })
   .then(res => {
     if (res.ok) {
-      statusDiv.innerHTML = "✅ Saved to Jucite!";
+      statusDiv.innerHTML = "✅ Saved successfully!";
     } else {
       statusDiv.innerHTML = "❌ Failed to save.";
       saveBtn.disabled = false;
     }
   })
   .catch(err => {
-    statusDiv.innerHTML = "❌ Server offline.";
+    statusDiv.innerHTML = "❌ Error: Is Jucite running?";
     saveBtn.disabled = false;
   });
 });
