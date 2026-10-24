@@ -317,13 +317,13 @@ end
 @get "/api/sync/drive" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     
-    token_file = "google_tokens.json"
-    access_token = ""
-    if isfile(token_file)
-        try access_token = safe_str(JSON3.read(read(token_file, String)).access_token) catch end
+    # FIX: Call the smart function that auto-renews the token if needed!
+    access_token = get_valid_access_token()
+    
+    if isempty(access_token) 
+        return HTTP.Response(400, headers, "{\"status\": \"error\", \"message\": \"Google Drive token expired or unlinked.\"}") 
     end
     
-    if isempty(access_token) return HTTP.Response(400, headers, "{\"status\": \"error\", \"message\": \"Google Drive not linked.\"}") end
     println("☁️ Starting Two-Way Collaborative Sync with Google Drive...")
     
     try
@@ -446,10 +446,56 @@ end
 # ======================================================
 
 const TOKEN_FILE = "google_tokens.json"
-
-# REPLACE THESE WITH YOUR REAL CREDENTIALS FROM GOOGLE CLOUD:
-const GOOGLE_CLIENT_ID = "294097590701-qn697fri8ommi53cus67tb89sqn76sii.apps.googleusercontent.com"
-const GOOGLE_CLIENT_SECRET = "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"
+const GOOGLE_CLIENT_ID = "HIDDEN_FOR_GITHUB"
+const GOOGLE_CLIENT_SECRET = "HIDDEN_FOR_GITHUB"
+# 1. NEW BACKGROUND REFRESHER ENGINE
+function get_valid_access_token()
+    if !isfile(TOKEN_FILE) return "" end
+    
+    data = JSON3.read(read(TOKEN_FILE, String))
+    access_token = haskey(data, :access_token) ? String(data.access_token) : ""
+    refresh_token = haskey(data, :refresh_token) ? String(data.refresh_token) : ""
+    expires_at = haskey(data, :expires_at) ? Float64(data.expires_at) : 0.0
+    
+    # If the token is still valid for at least 60 more seconds, use it!
+    if time() < (expires_at - 60)
+        return access_token
+    end
+    
+    # If it expired, silently fetch a new one using the Refresh Token!
+    if !isempty(refresh_token)
+        println("🔄 Access Token expired. Auto-refreshing silently in background...")
+        url = "https://oauth2.googleapis.com/token"
+        payload = Dict(
+            "client_id" => GOOGLE_CLIENT_ID,
+            "client_secret" => GOOGLE_CLIENT_SECRET,
+            "refresh_token" => refresh_token,
+            "grant_type" => "refresh_token"
+        )
+        try
+            res = HTTP.post(url, ["Content-Type" => "application/json"], JSON3.write(payload))
+            new_data = JSON3.read(res.body)
+            
+            new_access = String(new_data.access_token)
+            new_expires = time() + Int(get(new_data, :expires_in, 3600))
+            
+            # Save the new token so we don't have to refresh again for another hour
+            save_data = Dict(
+                "status" => "linked",
+                "access_token" => new_access,
+                "refresh_token" => refresh_token,
+                "expires_at" => new_expires,
+                "account" => String(get(data, :account, "Linked Google Account"))
+            )
+            write(TOKEN_FILE, JSON3.write(save_data))
+            println("✅ Token successfully refreshed!")
+            return new_access
+        catch e
+            println("❌ Failed to auto-refresh token: ", e)
+        end
+    end
+    return ""
+end
 
 @get "/api/sync/status" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -463,27 +509,20 @@ end
 
 @get "/api/oauth/google" function(req::HTTP.Request)
     redirect_uri = "http://127.0.0.1:8080/api/oauth/callback"
-    # Scope for creating and managing only the files Jucite creates
     scope = "https://www.googleapis.com/auth/drive.file" 
-    
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=$(GOOGLE_CLIENT_ID)&redirect_uri=$(redirect_uri)&response_type=code&scope=$(scope)&access_type=offline&prompt=consent"
-    
     return HTTP.Response(302, ["Location" => auth_url], "")
 end
 
+# 2. UPDATED CALLBACK TO CAPTURE REFRESH TOKEN
 @get "/api/oauth/callback" function(req::HTTP.Request)
     params = queryparams(req)
-    
-    if haskey(params, "error")
-        return HTTP.Response(400, "User denied access.")
-    end
+    if haskey(params, "error") return HTTP.Response(400, "User denied access.") end
     
     code = get(params, "code", "")
     redirect_uri = "http://127.0.0.1:8080/api/oauth/callback"
     
-    println("🔄 Exchanging authorization code for Access Token...")
-    
-    # Send code to Google to get the real Access Token
+    println("🔄 Exchanging authorization code for Access & Refresh Tokens...")
     token_url = "https://oauth2.googleapis.com/token"
     payload = Dict(
         "client_id" => GOOGLE_CLIENT_ID,
@@ -497,21 +536,26 @@ end
         res = HTTP.post(token_url, ["Content-Type" => "application/json"], JSON3.write(payload))
         token_data = JSON3.read(res.body)
         
-        # Save real token to file
+        # Calculate exactly when this token expires (Unix Timestamp)
+        expires_at = time() + Int(get(token_data, :expires_in, 3600))
+        
+        # Save BOTH tokens!
         save_data = Dict(
             "status" => "linked",
             "access_token" => String(token_data.access_token),
+            "refresh_token" => haskey(token_data, :refresh_token) ? String(token_data.refresh_token) : "",
+            "expires_at" => expires_at,
             "account" => "Linked Google Account"
         )
         write(TOKEN_FILE, JSON3.write(save_data))
-        println("✅ Real Google Access Token Acquired & Saved!")
+        println("✅ Google Tokens Acquired & Saved!")
         
         html_response = """
         <!DOCTYPE html>
         <html>
         <body style="font-family:sans-serif; text-align:center; padding:50px; background:#f8fafc;">
           <h1 style="color:#10b981;">✅ Google Drive Successfully Linked!</h1>
-          <p style="color:#475569;">You can now sync your library to the cloud.</p>
+          <p style="color:#475569;">You can now sync your library to the cloud forever.</p>
           <p style="color:#94a3b8; font-size:12px;">This window will close automatically...</p>
           <script>setTimeout(() => window.close(), 2000);</script>
         </body>
@@ -520,16 +564,13 @@ end
         return HTTP.Response(200, ["Content-Type" => "text/html; charset=utf-8"], html_response)
         
     catch e
-        println("❌ Token Exchange Error: ", e)
         return HTTP.Response(500, "Failed to connect to Google.")
     end
 end
-# 4. Unlink Google Drive Account
+
 @post "/api/sync/unlink" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    if isfile(TOKEN_FILE)
-        rm(TOKEN_FILE, force=true)
-    end
+    if isfile(TOKEN_FILE) rm(TOKEN_FILE, force=true) end
     println("🔓 Google Drive Account Unlinked.")
     return HTTP.Response(200, headers, "{\"status\": \"unlinked\"}")
 end
