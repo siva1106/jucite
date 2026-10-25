@@ -466,8 +466,26 @@ end
 # ======================================================
 
 const TOKEN_FILE = "google_tokens.json"
-const GOOGLE_CLIENT_ID = "HIDDEN_FOR_GITHUB"
-const GOOGLE_CLIENT_SECRET = "HIDDEN_FOR_GITHUB"
+# ======================================================
+# --- LOAD CREDENTIALS SAFELY FROM SECRETS.JSON ---
+# ======================================================
+
+const SECRETS_FILE = "secrets.json"
+
+function get_oauth_credentials()
+    if isfile(SECRETS_FILE)
+        try
+            data = JSON3.read(read(SECRETS_FILE, String))
+            return (String(data.client_id), String(data.client_secret))
+        catch e
+            println("⚠️ Error reading secrets.json")
+        end
+    end
+    # Fallback if file doesn't exist
+    return ("HIDDEN_FOR_GITHUB", "HIDDEN_FOR_GITHUB")
+end
+
+const (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) = get_oauth_credentials()
 # 1. NEW BACKGROUND REFRESHER ENGINE
 function get_valid_access_token()
     if !isfile(TOKEN_FILE) return "" end
