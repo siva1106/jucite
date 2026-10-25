@@ -1,4 +1,21 @@
 module Jucite
+using Logging
+
+# SILENCE ROUTE REPLACEMENT WARNINGS PERMANENTLY
+struct RouteWarningFilter <: Logging.AbstractLogger
+    logger::Logging.AbstractLogger
+end
+Logging.min_enabled_level(l::RouteWarningFilter) = Logging.min_enabled_level(l.logger)
+Logging.shouldlog(l::RouteWarningFilter, level, frommodule, group, id) = Logging.shouldlog(l.logger, level, frommodule, group, id)
+function Logging.handle_message(l::RouteWarningFilter, level, msg, _module, group, id, file, line; kwargs...)
+    if level == Logging.Warn && contains(string(msg), "replacing existing registered route")
+        return # Silently drop this specific warning!
+    end
+    Logging.handle_message(l.logger, level, msg, _module, group, id, file, line; kwargs...)
+end
+if !(Logging.current_logger() isa RouteWarningFilter)
+    Logging.global_logger(RouteWarningFilter(Logging.current_logger()))
+end
 
 using SQLite
 using DataFrames

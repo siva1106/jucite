@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <style>
     body { user-select: none; overflow: hidden; background-color: #f3f4f6; }
-    .pane-scroll { overflow-y: auto; height: calc(100vh - 78px); }
+    .pane-scroll { overflow-y: auto; height: calc(100vh - 98px); }
     .selected-row { background-color: #0ea5e9 !important; color: white !important; }
     .selected-row td { border-color: #0ea5e9 !important; }
     .dropdown-menu { display: none; position: absolute; top: 26px; background: white; border: 1px solid #cbd5e1; border-radius: 6px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); z-index: 50; width: 200px; padding: 4px; }
@@ -24,21 +24,22 @@
 </head>
 <body class="text-sm font-sans h-screen flex flex-col" onclick="closeAllDropdowns(event)">
 <!-- JUCITE LOADING SPLASH SCREEN -->
-  <div id="splash-screen" class="fixed inset-0 bg-slate-50 z-[9999] flex flex-col items-center justify-center transition-opacity duration-500">
-    <img src="/assets/logo.png" alt="Jucite Logo" class="h-32 w-auto animate-pulse mb-4 drop-shadow-md">
-    <div class="text-indigo-900 font-extrabold text-xl tracking-tight">Jucite Reference Manager</div>
+  <div id="splash-screen" class="fixed inset-0 bg-white z-[9999] flex flex-col items-center justify-center transition-opacity duration-500">
+    <img src="/assets/logo.png" alt="Jucite Logo" class="h-56 w-auto object-contain animate-pulse mb-6 drop-shadow-md">
+    <div class="text-[#112558] font-extrabold text-2xl tracking-tight">Jucite Reference Manager</div>
   </div>
   <!-- HIDDEN IMPORT FILE INPUT -->
   <input type="file" id="importFileInput" accept=".json,.txt" class="hidden" onchange="handleImport(event)">
-
- <!-- TOP MENU BAR -->
-  <div class="bg-slate-50 border-b border-slate-200 flex items-center px-3 py-2 text-xs text-slate-700 relative z-40">
+ <!-- TOP MENU BAR (TALLER & SPACIOUS) -->
+  <div class="bg-white border-b border-slate-200 flex items-center px-4 py-2.5 text-slate-700 relative z-40 shadow-sm">
     
-    <!-- BRANDING LOGO (Cleaned and Enlarged) -->
-    <div class="font-extrabold text-[#112558] mr-6 flex items-center gap-2.5 text-[15px] tracking-tight">
-      <img src="/assets/logo.png" alt="Jucite Logo" class="h-9 w-auto drop-shadow-sm">
-      Jucite
-    </div> 
+    <!-- EMBEDDED OFFICIAL BRAND LOGO (LARGE & PROMINENT) -->
+    <div class="mr-6 flex items-center cursor-pointer" onclick="location.reload()" title="Jucite Reference Manager">
+      <img src="/assets/logo.png" alt="Jucite" class="h-12 w-auto object-contain drop-shadow-sm">
+    </div>
+
+    <!-- MENUS (PROPORTIONED TO FIT THE TALLER BAR) -->
+    <div class="flex items-center gap-1 text-[13px] font-medium text-slate-700">
     <div class="relative">
       <div class="px-3 py-1 hover:bg-slate-200 cursor-pointer rounded transition" onclick="toggleDropdown(event, 'file-menu')">File</div>
       <div id="file-menu" class="dropdown-menu">
