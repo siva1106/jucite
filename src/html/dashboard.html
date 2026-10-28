@@ -579,9 +579,37 @@
       else if (paper && paper.doi) { window.open(`https://doi.org/${paper.doi}`, '_blank'); }
     }
 
+    // --- ADVANCED CRASH-PROOF SEARCH ENGINE ---
     function filterPapers() {
-      const q = document.getElementById('search').value.toLowerCase();
-      renderPapers(allPapers.filter(p => p.title.toLowerCase().includes(q) || p.journal.toLowerCase().includes(q) || p.year.toString().includes(q)));
+      try {
+        const q = document.getElementById('search').value.toLowerCase().trim();
+        
+        // If search box is empty, show all papers
+        if (q === "") {
+          renderPapers(allPapers);
+          return;
+        }
+
+        const filtered = allPapers.filter(p => {
+          // Safely extract all text, defaulting to "" if null/missing
+          const title = p.title ? p.title.toLowerCase() : "";
+          const journal = p.journal ? p.journal.toLowerCase() : "";
+          const year = p.year ? p.year.toString() : "";
+          
+          // Safely extract all author names into one long string
+          let authorStr = "";
+          if (p.authors && p.authors.length > 0) {
+            authorStr = p.authors.map(a => `${a.family || ''} ${a.given || ''}`).join(" ").toLowerCase();
+          }
+
+          // Return true if the query matches ANY of these fields
+          return title.includes(q) || journal.includes(q) || year.includes(q) || authorStr.includes(q);
+        });
+        
+        renderPapers(filtered);
+      } catch(e) {
+        console.error("Search Engine Error:", e);
+      }
     }
 
     // --- ACTIVATED SMART FOLDERS ---

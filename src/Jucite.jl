@@ -284,7 +284,6 @@ function read_drive_file(file_id::String, token::String)
 end
 function create_drive_folder(folder_name::String, parent_id, token)
     parent_str = safe_str(parent_id); tok_str = safe_str(token)
-    
     existing_id = get_drive_id(folder_name, true, parent_str, tok_str)
     if !isempty(existing_id) return existing_id end
     
@@ -295,14 +294,19 @@ function create_drive_folder(folder_name::String, parent_id, token)
     
     try
         res = HTTP.post(url, headers, JSON3.write(body_dict); status_exception=false)
-        if res.status == 200 return safe_str(JSON3.read(res.body).id) end
-    catch e end
+        if res.status == 200 
+            return safe_str(JSON3.read(res.body).id) 
+        else
+            println("❌ Google Folder Creation Failed (Status $(res.status)): ", String(res.body))
+        end
+    catch e 
+        println("❌ Exception in create_drive_folder: ", e)
+    end
     return ""
 end
 
 function upload_file_to_drive(file_path::String, file_name::String, parent_id, mime::String, token; overwrite=false)
     parent_str = safe_str(parent_id); tok_str = safe_str(token)
-    
     existing_id = get_drive_id(file_name, false, parent_str, tok_str)
     file_id = ""
     
@@ -323,15 +327,27 @@ function upload_file_to_drive(file_path::String, file_name::String, parent_id, m
             res_meta = HTTP.post(url_create, headers, JSON3.write(meta_dict); status_exception=false)
             if res_meta.status == 200
                 file_id = safe_str(JSON3.read(res_meta.body).id)
-            else return end
-        catch e return end
+            else 
+                println("❌ Google File Metadata Creation Failed for '$file_name' (Status $(res_meta.status)): ", String(res_meta.body))
+                return 
+            end
+        catch e 
+            println("❌ Exception creating metadata: ", e)
+            return 
+        end
     end
     
     try
         url_upload = "https://www.googleapis.com/upload/drive/v3/files/$file_id?uploadType=media"
-        HTTP.patch(url_upload, ["Authorization" => "Bearer $tok_str", "Content-Type" => mime], read(file_path); status_exception=false)
-        println("✅ Uploaded: $file_name")
-    catch e end
+        res_patch = HTTP.patch(url_upload, ["Authorization" => "Bearer $tok_str", "Content-Type" => mime], read(file_path); status_exception=false)
+        if res_patch.status == 200
+            println("✅ Uploaded: $file_name")
+        else
+            println("❌ Google Upload Body Failed for '$file_name' (Status $(res_patch.status)): ", String(res_patch.body))
+        end
+    catch e 
+        println("❌ Exception uploading content: ", e)
+    end
 end
 # --- MAIN COLLABORATIVE SYNC ENDPOINT ---
 @get "/api/sync/drive" function(req::HTTP.Request)
