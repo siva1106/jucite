@@ -1,0 +1,53 @@
+name: Build and Release Jucite
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.10'
+
+      - name: Install Dependencies
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Compile Jucite
+        run: julia --project=. build.jl
+
+      - name: Package as AppImage
+        run: |
+          mkdir -p AppDir/usr
+          cp -r JuciteApp/* AppDir/usr/
+          cp src/assets/logo.png AppDir/jucite.png
+          echo '#!/bin/sh' > AppDir/AppRun
+          echo 'cd "$(dirname "$0")/usr/bin"' >> AppDir/AppRun
+          echo 'exec ./Jucite' >> AppDir/AppRun
+          chmod +x AppDir/AppRun
+          echo '[Desktop Entry]' > AppDir/Jucite.desktop
+          echo 'Name=Jucite' >> AppDir/Jucite.desktop
+          echo 'Exec=Jucite' >> AppDir/Jucite.desktop
+          echo 'Icon=jucite' >> AppDir/Jucite.desktop
+          echo 'Type=Application' >> AppDir/Jucite.desktop
+          echo 'Categories=Utility;' >> AppDir/Jucite.desktop
+          wget "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir Jucite-Linux-x86_64.AppImage
+
+      - name: Upload Linux Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: Jucite-Linux-x86_64.AppImage
+          tag_name: "v1.0.0"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
