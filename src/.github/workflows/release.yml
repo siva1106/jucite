@@ -1,0 +1,88 @@
+name: Build and Release Jucite
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers automatically when you push a tag like "v1.0"
+  workflow_dispatch: # Allows you to trigger it manually from GitHub.com
+
+jobs:
+  build-linux:
+    name: Build Linux AppImage
+    runs-on: ubuntu-20.04 # Use 20.04 for best backward compatibility on Linux
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.10' # Ensure this matches your Julia version
+
+      - name: Install Dependencies
+        run: |
+          julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Compile Jucite
+        run: julia --project=. build.jl
+
+      - name: Package as AppImage
+        run: |
+          # Create AppDir structure
+          mkdir -p AppDir/usr
+          cp -r JuciteApp/* AppDir/usr/
+          cp src/assets/logo.png AppDir/jucite.png
+          
+          # Create AppRun script (What runs when double-clicked)
+          echo '#!/bin/sh' > AppDir/AppRun
+          echo 'cd "$(dirname "$0")/usr/bin"' >> AppDir/AppRun
+          echo 'exec ./Jucite' >> AppDir/AppRun
+          chmod +x AppDir/AppRun
+          
+          # Create .desktop file
+          echo '[Desktop Entry]' > AppDir/Jucite.desktop
+          echo 'Name=Jucite' >> AppDir/Jucite.desktop
+          echo 'Exec=Jucite' >> AppDir/Jucite.desktop
+          echo 'Icon=jucite' >> AppDir/Jucite.desktop
+          echo 'Type=Application' >> AppDir/Jucite.desktop
+          echo 'Categories=Utility;' >> AppDir/Jucite.desktop
+          
+          # Download official AppImageTool and build it
+          wget "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir Jucite-Linux-x86_64.AppImage
+
+      - name: Upload Linux Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: Jucite-Linux-x86_64.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build Windows App
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v1
+        with:
+          version: '1.10'
+
+      - name: Install Dependencies
+        run: julia --project=. -e "using Pkg; Pkg.instantiate()"
+
+      - name: Compile Jucite
+        run: julia --project=. build.jl
+
+      - name: Zip Windows App
+        run: Compress-Archive -Path JuciteApp\* -DestinationPath Jucite-Windows-x64.zip
+
+      - name: Upload Windows Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: Jucite-Windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

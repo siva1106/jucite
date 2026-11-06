@@ -349,6 +349,34 @@ function upload_file_to_drive(file_path::String, file_name::String, parent_id, m
         println("❌ Exception uploading content: ", e)
     end
 end
+"""
+    delete_orphaned_drive_files(folder_id::String, active_filenames::Vector{String}, token::String)
+Scans a Google Drive folder and deletes any files that are not in the active_filenames list.
+"""
+function delete_orphaned_drive_files(folder_id::String, active_filenames::Vector{String}, token::String)
+    if isempty(folder_id) return end
+    
+    url = "https://www.googleapis.com/drive/v3/files?q='$(folder_id)'+in+parents+and+trashed=false&fields=files(id,name)"
+    headers = ["Authorization" => "Bearer $token"]
+    
+    try
+        res = HTTP.get(url, headers; status_exception=false)
+        if res.status == 200
+            drive_files = JSON3.read(res.body).files
+            for f in drive_files
+                file_name = String(f.name)
+                # If the file in Google Drive is NOT in our active list, delete it!
+                if !(file_name in active_filenames)
+                    file_id = String(f.id)
+                    println("🗑️ Deleting orphaned file from Google Drive: ", file_name)
+                    HTTP.delete("https://www.googleapis.com/drive/v3/files/$file_id", headers; status_exception=false)
+                end
+            end
+        end
+    catch e
+        println("⚠️ Failed to delete orphaned files: ", e)
+    end
+end
 # --- MAIN COLLABORATIVE SYNC ENDPOINT ---
 @get "/api/sync/drive" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -372,62 +400,19 @@ end
         temp_dir = joinpath(homedir(), "Jucite_Temp_Upload")
         mkpath(temp_dir)
         
-        # 1. PULL (DOWN-SYNC): Check cloud groups for new papers from teammates!
-        cursor_groups = DBInterface.execute(db, "SELECT id, name FROM collections WHERE is_group = 1")
-        for g_row in eachrow(DataFrame(cursor_groups))
-            group_id = g_row.id
-            clean_group_name = replace(g_row.name, r"[^a-zA-Z0-9_\-\s]" => "_")
-            
-            # FIXED: Using the new unified get_drive_id function
-            cloud_g_id = get_drive_id(clean_group_name, true, groups_id, access_token)
-            if !isempty(cloud_g_id)
-                index_id = get_drive_id("group_index.json", false, cloud_g_id, access_token)
-                if !isempty(index_id)
-                    cloud_json = read_drive_file(index_id, access_token)
-                    if !isempty(cloud_json)
-                        println("📥 Downloading papers from teammate for group: $(g_row.name)")
-                        cloud_papers = JSON3.read(cloud_json)
-                        
-                        SQLite.transaction(db) do
-                            for p in cloud_papers
-                            p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
-                            if isempty(p_doi) continue end
-                            
-                            # Check if User B already has this paper locally
-                            c_check = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
-                            
-                            if isempty(c_check)
-                                println("📥 New paper found from teammate! Auto-fetching PDF for: ", p_doi)
-                                
-                                # Let Jucite do the heavy lifting! Fetch metadata & download PDF automatically for User B!
-                                paper_info = fetch_metadata(p_doi)
-                                if paper_info !== nothing
-                                    # Save it and link it to the shared group!
-                                    save_paper(paper_info, group_id)
-                                end
-                            else
-                                # If User B already has the paper, just make sure it's linked to the group
-                                pid = first(c_check).id
-                                stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
-                                SQLite.execute(stmt_link, (group_id, pid))
-                            end
-                        end
-                        end
-                    end
-                end
-            end
-        end
-
-        # 2. PUSH (UP-SYNC): Upload our active library to the cloud
+        # ==========================================
+        # 1. PUSH (UP-SYNC): Upload our active library to the cloud FIRST!
+        # (This ensures deleted files overwrite the cloud before we accidentally re-download them)
+        # ==========================================
         df_papers = DBInterface.execute(db, "SELECT id, title, year, journal, doi, pdf_path FROM papers WHERE trashed IS NULL OR trashed = 0") |> DataFrame
         
         group_indexes = Dict{String, Vector{Any}}()
-        item_count = 0
+        active_my_lib_files = String[]
+        group_files_map = Dict{String, Vector{String}}()
         
+        item_count = 0
         for row in eachrow(df_papers)
-            # FIXED: Safe year extraction for missing values
             year_str = ismissing(row.year) || row.year == 0 ? "UnknownYear" : string(row.year)
-            
             safe_title = replace(row.title, r"<[^>]*>" => "")
             safe_title = replace(safe_title, r"&[a-zA-Z]+;" => "")
             safe_title = replace(safe_title, r"[\n\r\t]" => " ")
@@ -441,33 +426,108 @@ end
             df_group = DataFrame(cursor_group)
             
             target_cloud_id = my_lib_id
+            is_group_paper = false
+            group_name = ""
+            
             if nrow(df_group) > 0
+                is_group_paper = true
                 group_name = df_group.name[1]
                 target_cloud_id = create_drive_folder(group_name, groups_id, access_token)
                 
+                if !haskey(group_files_map, group_name) group_files_map[group_name] = String[] end
                 if !haskey(group_indexes, group_name) group_indexes[group_name] = [] end
+                
                 push!(group_indexes[group_name], Dict("title" => row.title, "doi" => row.doi, "year" => row.year, "journal" => row.journal))
             end
             
             has_pdf = !ismissing(row.pdf_path) && !isempty(row.pdf_path) && isfile(row.pdf_path)
+            
             if has_pdf
-                upload_file_to_drive(row.pdf_path, "$(filename_base).pdf", target_cloud_id, "application/pdf", access_token; overwrite=false)
+                pdf_filename = "$(filename_base).pdf"
+                upload_file_to_drive(row.pdf_path, pdf_filename, target_cloud_id, "application/pdf", access_token; overwrite=false)
+                if is_group_paper
+                    push!(group_files_map[group_name], pdf_filename)
+                else
+                    push!(active_my_lib_files, pdf_filename)
+                end
             else
-                txt_path = joinpath(temp_dir, "$(filename_base)_Metadata.txt")
-                write(txt_path, "Title: $(row.title)\nDOI: $(row.doi)")
-                upload_file_to_drive(txt_path, "$(filename_base)_Metadata.txt", target_cloud_id, "text/plain", access_token; overwrite=false)
+                authors = get_paper_authors(db, row.id)
+                author_str = isempty(authors) ? "Unknown" : join(authors, ", ")
+                metadata_content = "Title: $(row.title)\nAuthors: $author_str\nJournal: $(row.journal)\nYear: $(row.year)\nDOI: $(row.doi)"
+                
+                txt_filename = "$(filename_base)_Metadata.txt"
+                txt_path = joinpath(temp_dir, txt_filename)
+                write(txt_path, metadata_content)
+                upload_file_to_drive(txt_path, txt_filename, target_cloud_id, "text/plain", access_token; overwrite=false)
+                
+                if is_group_paper
+                    push!(group_files_map[group_name], txt_filename)
+                else
+                    push!(active_my_lib_files, txt_filename)
+                end
             end
             item_count += 1
         end
         
-        # 3. OVERWRITE GROUP JSON FILES IN CLOUD
+        # OVERWRITE GROUP JSON FILES IN CLOUD
         for (g_name, g_papers) in group_indexes
             g_cloud_id = create_drive_folder(g_name, groups_id, access_token)
             json_path = joinpath(temp_dir, "group_index.json")
             write(json_path, JSON3.write(g_papers))
             upload_file_to_drive(json_path, "group_index.json", g_cloud_id, "application/json", access_token; overwrite=true)
+            push!(group_files_map[g_name], "group_index.json")
         end
         
+        # --- CLEANUP ORPHANED FILES ---
+        println("🧹 Cleaning up deleted files from Google Drive...")
+        delete_orphaned_drive_files(my_lib_id, active_my_lib_files, access_token)
+        for (g_name, g_files) in group_files_map
+            g_id = create_drive_folder(g_name, groups_id, access_token)
+            delete_orphaned_drive_files(g_id, g_files, access_token)
+        end
+        
+        # ==========================================
+        # 2. PULL (DOWN-SYNC): Now check for new papers from teammates!
+        # ==========================================
+        cursor_groups = DBInterface.execute(db, "SELECT id, name FROM collections WHERE is_group = 1")
+        for g_row in eachrow(DataFrame(cursor_groups))
+            group_id = g_row.id
+            clean_group_name = replace(g_row.name, r"[^a-zA-Z0-9_\-\s]" => "_")
+            
+            cloud_g_id = get_drive_id(clean_group_name, true, groups_id, access_token)
+            if !isempty(cloud_g_id)
+                index_id = get_drive_id("group_index.json", false, cloud_g_id, access_token)
+                if !isempty(index_id)
+                    cloud_json = read_drive_file(index_id, access_token)
+                    if !isempty(cloud_json)
+                        println("📥 Syncing team papers for group: $(g_row.name)")
+                        cloud_papers = JSON3.read(cloud_json)
+                        
+                        local_db = get_db()
+                        for p in cloud_papers
+                            p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
+                            p_title = (haskey(p, :title) && p.title !== nothing) ? string(p.title) : "Unknown"
+                            if isempty(p_doi) continue end
+                            
+                            c_check = DBInterface.execute(local_db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
+                            
+                            if isempty(c_check)
+                                println("📥 New paper found from teammate! Auto-fetching PDF for: ", p_doi)
+                                paper_info = fetch_metadata(p_doi)
+                                if paper_info !== nothing
+                                    save_paper(paper_info, group_id)
+                                end
+                            else
+                                pid = first(c_check).id
+                                stmt_link = SQLite.Stmt(local_db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
+                                SQLite.execute(stmt_link, (group_id, pid))
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
         rm(temp_dir, recursive=true, force=true)
         println("✅ Collaborative Cloud Sync Complete!")
         return HTTP.Response(200, headers, JSON3.write(Dict("status" => "success", "message" => "Sync complete! No duplicates!")))
@@ -1192,32 +1252,38 @@ end
 end
 
 # ======================================================
-# --- STANDALONE DESKTOP LAUNCHER ---
+# --- SERVER LAUNCHER & DESKTOP BUNDLER ---
 # ======================================================
+
+function start_server()
+    println("🚀 Starting Jucite Private Server on port 8080...")
+    init_db()
+    load_or_fetch_style_catalog()
+    
+    # We turn off Oxygen's default noisy logging and use our own print statements
+    # so LibreOffice polling doesn't flood the terminal!
+    serve(port=8080, cors=true, access_log=nothing)
+end
 
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()
     load_or_fetch_style_catalog()
     
-    # 1. Start the Oxygen server in the background (asynchronously)
-    @async serve(port=8080, cors=true)
+    # Start server silently in background
+    @async serve(port=8080, cors=true, access_log=nothing)
     
-    # Give the server 1 second to fully boot up
     sleep(1.0)
     
     println("🖥️ Launching Jucite Native Desktop Window...")
-  # 2. Create the Native Desktop Window using Blink (Electron)
     opts = Dict(
         "title" => "Jucite Reference Manager",
-        # Use your custom logo for the Linux Taskbar and window icon!
         "icon" => joinpath(pwd(), "src", "assets", "logo.png"), 
         "width" => 1200,
         "height" => 800,
         "minWidth" => 800,
         "minHeight" => 600,
         "autoHideMenuBar" => true,
-        # FIX THE BLACK BOX: Pre-fill window with the exact Tailwind background color
         "backgroundColor" => "#f8fafc", 
         "webPreferences" => Dict("nodeIntegration" => true)
     )
@@ -1225,7 +1291,23 @@ function launch_desktop_app()
     w = Window(opts)
     Blink.loadurl(w, "http://127.0.0.1:8080/")
     
-    println("✅ Jucite Desktop is running!")    
+    println("✅ Jucite Desktop is running!")
     wait() 
 end
-end # <----- YOU NEED THIS 'end' TO CLOSE THE MODULE!
+
+end # End of Module Jucite
+# ======================================================
+# --- COMPILER ENTRY POINT ---
+# ======================================================
+
+Base.@ccallable function julia_main()::Cint
+    try
+        # When compiled, the executable runs in a 'bin' folder.
+        # We ensure the working directory is set correctly so it can find src/html/dashboard.html
+        cd(joinpath(@__DIR__, "..", "..")) 
+        launch_desktop_app()
+    catch e
+        println("Fatal Error: ", e)
+    end
+    return 0
+end
