@@ -527,6 +527,54 @@ end
                 end
             end
         end
+        # --- AUTO-DISCOVER SHARED GROUPS FROM TEAMMATES ---
+        println("🔍 Checking for new Jucite Groups shared with you...")
+        shared_q = HTTP.URIs.escapeuri("sharedWithMe = true and mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+        shared_url = "https://www.googleapis.com/drive/v3/files?q=$shared_q&fields=files(id,name)"
+        
+        try
+            res_shared = HTTP.get(shared_url, ["Authorization" => "Bearer $access_token"]; status_exception=false)
+            if res_shared.status == 200
+                shared_folders = JSON3.read(res_shared.body).files
+                for sf in shared_folders
+                    sf_id = safe_str(sf.id)
+                    sf_name = safe_str(sf.name)
+                    
+                    # Check if this shared folder contains a Jucite 'group_index.json'
+                    index_id = get_drive_id("group_index.json", false, sf_id, access_token)
+                    if !isempty(index_id)
+                        println("🤝 Auto-discovered shared Jucite Group: $sf_name")
+                        
+                        # Auto-create the group locally in User B's database!
+                        SQLite.execute(SQLite.Stmt(db, "INSERT OR IGNORE INTO collections (name, is_group) VALUES (?, 1)"), (sf_name,))
+                        c_grp = DBInterface.execute(db, "SELECT id FROM collections WHERE name = ?", (sf_name,))
+                        local_gid = first(c_grp).id
+                        
+                        # Pull papers from this shared group!
+                        cloud_json = read_drive_file(index_id, access_token)
+                        if !isempty(cloud_json)
+                            cloud_papers = JSON3.read(cloud_json)
+                            local_db = get_db()
+                            for p in cloud_papers
+                                p_doi = (haskey(p, :doi) && p.doi !== nothing) ? string(p.doi) : ""
+                                if isempty(p_doi) continue end
+                                
+                                c_check = DBInterface.execute(local_db, "SELECT id FROM papers WHERE doi = ?", (p_doi,))
+                                if isempty(c_check)
+                                    paper_info = fetch_metadata(p_doi)
+                                    if paper_info !== nothing save_paper(paper_info, local_gid) end
+                                else
+                                    pid = first(c_check).id
+                                    SQLite.execute(SQLite.Stmt(local_db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)"), (local_gid, pid))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        catch e
+            println("⚠️ Shared discovery skipped: ", e)
+        end
 
         rm(temp_dir, recursive=true, force=true)
         println("✅ Collaborative Cloud Sync Complete!")
@@ -537,6 +585,7 @@ end
         return HTTP.Response(500, headers, "{\"status\": \"error\", \"message\": \"Sync Failed.\"}")
     end
 end
+
 # ======================================================
 # --- GOOGLE DRIVE OAUTH2 LINKAGE ENGINE ---
 # ======================================================
@@ -1034,6 +1083,8 @@ end
 end
 # NEW: Serve the official Jucite logo
 @get "/assets/logo.png" function() return file("src/assets/logo.png") end
+@get "/assets/logo.png" function() return file("src/assets/logo.png") end
+@get "/assets/icon.png" function() return file("src/assets/icon.png") end
 
 # 1. LIBRARY ENDPOINT (WITH TRASH & GROUP FILTERING)
 @get "/api/library" function(req::HTTP.Request)
@@ -1227,30 +1278,144 @@ end
     if isempty(cursor) return HTTP.Response(404, headers, "{\"error\": \"Paper not found\"}") end
     paper = first(cursor)
     
-    authors = get_paper_authors(db, id)
+   authors = get_paper_authors(db, id)
     first_author = !isempty(authors) ? split(authors[1], ", ")[1] : "Unknown"
+    
+    # Scrub out ugly &amp;lt;i&amp;gt; and HTML tags from titles!
+    clean_title = replace(paper.title, r"&amp;lt;/?[a-zA-Z0-9]+&amp;gt;" => "")
+    clean_title = replace(clean_title, r"&lt;/?[a-zA-Z0-9]+&gt;" => "")
+    clean_title = replace(clean_title, r"<[^>]*>" => "")
+    clean_title = replace(clean_title, "&amp;" => "&")
     
     in_text = ""
     bibliography = ""
     
     if contains(style, "vancouver-superscript") || contains(style, "superscript")
         in_text = "¹"
-        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal). $(paper.year)."
+        bibliography = "1. $(join(authors, ", ")). $(clean_title). $(paper.journal). $(paper.year)."
     elseif contains(style, "vancouver") || contains(style, "ieee") || contains(style, "brackets")
         in_text = "[1]"
-        bibliography = "[1] $(join(authors, ", ")), \"$(paper.title),\" $(paper.journal), $(paper.year)."
+        bibliography = "[1] $(join(authors, ", ")), \"$(clean_title),\" $(paper.journal), $(paper.year)."
     elseif contains(style, "nature") || contains(style, "lancet")
         in_text = "¹"
-        bibliography = "1. $(join(authors, ", ")). $(paper.title). $(paper.journal) $(paper.year)."
+        bibliography = "1. $(join(authors, ", ")). $(clean_title). $(paper.journal) $(paper.year)."
     else
         author_str = length(authors) == 1 ? first_author : (length(authors) == 2 ? "$(first_author) & $(split(authors[2], ", ")[1])" : "$(first_author) et al.")
         in_text = "($(author_str), $(paper.year))"
-        bibliography = "$(join(authors, ", ")) ($(paper.year)). $(paper.title). $(paper.journal)."
+        bibliography = "$(join(authors, ", ")) ($(paper.year)). $(clean_title). $(paper.journal)."
     end
     
     return HTTP.Response(200, headers, JSON3.write(Dict("in_text" => in_text, "bibliography" => bibliography, "style" => style, "paper_id" => id)))
 end
+# ======================================================
+# --- IN-APP TEAMMATE SHARING (GOOGLE DRIVE PERMISSIONS API) ---
+# ======================================================
 
+@route ["OPTIONS"] "/api/groups/share" function(req::HTTP.Request)
+    return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
+end
+
+@post "/api/groups/share" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    access_token = get_valid_access_token()
+    if isempty(access_token)
+        return HTTP.Response(401, headers, "{\"error\": \"Please link your Google account in Preferences first.\"}")
+    end
+    
+    try
+        data = json(req)
+        group_name = String(data.group_name)
+        email = String(data.email)
+        role = haskey(data, :role) ? String(data.role) : "writer" # "writer" (Edit) or "reader" (View)
+        
+        # 1. Locate (or create) the Group Folder in Google Drive
+        root_id = create_drive_folder("Jucite Library", "", access_token)
+        groups_id = create_drive_folder("Group Libraries", root_id, access_token)
+        target_folder_id = create_drive_folder(group_name, groups_id, access_token)
+        
+        if isempty(target_folder_id)
+            return HTTP.Response(500, headers, "{\"error\": \"Could not locate folder on Drive.\"}")
+        end
+        
+        # 2. Call Google Drive Permissions API to share directly with the teammate's email!
+        # Change true -> false so sharing stays 100% inside the Jucite App!
+perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissions?sendNotificationEmail=false"
+        perm_headers = [
+            "Authorization" => "Bearer $access_token",
+            "Content-Type" => "application/json"
+        ]
+        perm_body = Dict(
+            "role" => role,
+            "type" => "user",
+            "emailAddress" => email
+        )
+        
+        res = HTTP.post(perm_url, perm_headers, JSON3.write(perm_body); status_exception=false)
+        if res.status == 200 || res.status == 201
+            println("🤝 Shared group '$group_name' with $email (Role: $role)")
+            return HTTP.Response(200, headers, "{\"status\": \"success\", \"message\": \"Shared with $email!\"}")
+        else
+            println("❌ Google Share Error: ", String(res.body))
+            return HTTP.Response(res.status, headers, "{\"error\": \"Google rejected share request. Check the email address.\"}")
+        end
+    catch e
+        println("❌ Share Exception: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Share failed.\"}")
+    end
+end
+@get "/api/groups/members" function(req::HTTP.Request)
+    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
+    params = queryparams(req)
+    group_name = get(params, "group_name", "")
+    
+    if isempty(group_name)
+        return HTTP.Response(400, headers, "{\"error\": \"Missing group_name\"}")
+    end
+    
+    access_token = get_valid_access_token()
+    if isempty(access_token)
+        return HTTP.Response(401, headers, "{\"error\": \"Please link Google Drive in Preferences first.\"}")
+    end
+    
+    try
+        # 1. Locate the group folder inside Jucite Library -> Group Libraries
+        root_id = get_drive_id("Jucite Library", true, "", access_token)
+        groups_id = !isempty(root_id) ? get_drive_id("Group Libraries", true, root_id, access_token) : ""
+        target_folder_id = !isempty(groups_id) ? get_drive_id(group_name, true, groups_id, access_token) : ""
+        
+        # Fallback: Search globally (catches folders shared WITH you by teammates)
+        if isempty(target_folder_id)
+            target_folder_id = get_drive_id(group_name, true, "", access_token)
+        end
+        
+        if isempty(target_folder_id)
+            return HTTP.Response(200, headers, JSON3.write(Dict("count" => 0, "members" => [], "note" => "Not synced to Drive yet. Click Sync or send an invite first.")))
+        end
+        
+        # 2. Fetch live permissions list from Google Drive API
+        perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissions?fields=permissions(id,emailAddress,displayName,role,type)"
+        res = HTTP.get(perm_url, ["Authorization" => "Bearer $access_token"]; status_exception=false)
+        
+        if res.status == 200
+            data = JSON3.read(res.body)
+            members = []
+            if haskey(data, :permissions)
+                for p in data.permissions
+                    email = haskey(p, :emailAddress) && p.emailAddress !== nothing ? String(p.emailAddress) : "Link Access"
+                    dname = haskey(p, :displayName) && p.displayName !== nothing ? String(p.displayName) : email
+                    role = haskey(p, :role) && p.role !== nothing ? String(p.role) : "reader"
+                    push!(members, Dict("email" => email, "name" => dname, "role" => role))
+                end
+            end
+            return HTTP.Response(200, headers, JSON3.write(Dict("count" => length(members), "members" => members)))
+        else
+            return HTTP.Response(res.status, headers, "{\"error\": \"Could not fetch Drive permissions.\"}")
+        end
+    catch e
+        println("❌ Members Fetch Error: ", e)
+        return HTTP.Response(500, headers, "{\"error\": \"Failed to fetch members.\"}")
+    end
+end
 # ======================================================
 # --- SERVER LAUNCHER & DESKTOP BUNDLER ---
 # ======================================================
@@ -1278,7 +1443,7 @@ function launch_desktop_app()
     println("🖥️ Launching Jucite Native Desktop Window...")
     opts = Dict(
         "title" => "Jucite Reference Manager",
-        "icon" => joinpath(pwd(), "src", "assets", "logo.png"), 
+        "icon" => joinpath(pwd(), "src", "assets", "icon.png"), 
         "width" => 1200,
         "height" => 800,
         "minWidth" => 800,
