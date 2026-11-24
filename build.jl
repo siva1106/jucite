@@ -5,8 +5,9 @@ rm("Manifest.toml"; force=true)
 Pkg.activate(".")
 Pkg.resolve()
 Pkg.instantiate()
+Pkg.precompile()
 
-# Install PackageCompiler in the global environment so Project.toml stays clean
+# Switch to global environment to install and run PackageCompiler
 Pkg.activate()
 Pkg.add("PackageCompiler")
 using PackageCompiler

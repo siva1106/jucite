@@ -3,10 +3,27 @@ uuid = "d4e8a1b2-9c3f-4a5e-8b7d-2f1e3c4b5a6d"
 authors = ["RectoPress"]
 version = "1.0.0"
 
+
 [deps]
 Blink = "ad839575-38b3-5650-b840-f874b8c74a25"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 Oxygen = "df9a0d86-3283-4920-82dc-4555fc0d1d8b"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SQLite = "0aa819cd-b072-5ff4-a722-6bc24af294d9"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+
+[compat]
+Blink = "0.12.9"
+DataFrames = "1.8.3"
+Dates = "1.11.0"
+HTTP = "1.11.1"
+JSON3 = "1.14.4"
+Logging = "1.11.0"
+Oxygen = "1.7.5"
+Random = "1.11.0"
+SQLite = "1.11.0"
+Sockets = "1.11.0"

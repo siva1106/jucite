@@ -10,9 +10,6 @@ permissions:
   contents: write
 
 jobs:
-  # =====================================================
-  # 1. LINUX SINGLE FILE: Jucite-Linux-x86_64.AppImage
-  # =====================================================
   build-linux:
     name: Build Linux (.AppImage)
     runs-on: ubuntu-22.04
@@ -20,16 +17,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Install Linux AppImage Dependencies
+        run: sudo apt-get update && sudo apt-get install -y file libfuse2 desktop-file-utils
+
       - name: Setup Julia
         uses: julia-actions/setup-julia@v2
         with:
           version: '1.10'
 
-      - name: Install Dependencies
-        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
-
       - name: Compile Jucite Standalone
-        run: julia --project=. build.jl
+        run: julia build.jl
 
       - name: Package as Single AppImage
         run: |
@@ -37,8 +34,10 @@ jobs:
           cp -r JuciteApp/* AppDir/usr/
           if [ -f src/assets/icon.png ]; then
             cp src/assets/icon.png AppDir/jucite.png
+            cp src/assets/icon.png AppDir/.DirIcon
           else
             cp src/assets/logo.png AppDir/jucite.png
+            cp src/assets/logo.png AppDir/.DirIcon
           fi
           
           cat << 'APPRUN' > AppDir/AppRun
@@ -52,11 +51,11 @@ jobs:
           
           cat << 'DESKTOP' > AppDir/Jucite.desktop
           [Desktop Entry]
-          Name=Jucite Reference Manager
+          Name=Jucite
           Exec=Jucite
           Icon=jucite
           Type=Application
-          Categories=Education;Science;Utility;
+          Categories=Education;Science;
           DESKTOP
           
           wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
@@ -69,9 +68,6 @@ jobs:
           files: Jucite-Linux-x86_64.AppImage
           tag_name: "v1.0.0"
 
-  # =====================================================
-  # 2. WINDOWS SINGLE FILE: Jucite-Windows-Setup.exe
-  # =====================================================
   build-windows:
     name: Build Windows (.exe)
     runs-on: windows-latest
@@ -84,11 +80,8 @@ jobs:
         with:
           version: '1.10'
 
-      - name: Install Dependencies
-        run: julia --project=. -e "using Pkg; Pkg.instantiate()"
-
       - name: Compile Jucite Standalone
-        run: julia --project=. build.jl
+        run: julia build.jl
 
       - name: Compile Single .exe Installer (Inno Setup)
         shell: pwsh
@@ -126,9 +119,6 @@ jobs:
           files: Jucite-Windows-Setup.exe
           tag_name: "v1.0.0"
 
-  # =====================================================
-  # 3. MACOS SINGLE FILE: Jucite-macOS.dmg
-  # =====================================================
   build-macos:
     name: Build macOS (.dmg)
     runs-on: macos-latest
@@ -141,11 +131,8 @@ jobs:
         with:
           version: '1.10'
 
-      - name: Install Dependencies
-        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
-
       - name: Compile Jucite Standalone
-        run: julia --project=. build.jl
+        run: julia build.jl
 
       - name: Package as Native macOS .dmg
         run: |
