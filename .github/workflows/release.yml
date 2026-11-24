@@ -1,4 +1,4 @@
-name: Build and Release Jucite
+name: Build and Release Jucite (AppImage, EXE, DMG)
 
 on:
   push:
@@ -6,48 +6,185 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
+  # =====================================================
+  # 1. LINUX SINGLE FILE: Jucite-Linux-x86_64.AppImage
+  # =====================================================
   build-linux:
-    name: Build Linux AppImage
-    runs-on: ubuntu-20.04
+    name: Build Linux (.AppImage)
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Julia
-        uses: julia-actions/setup-julia@v1
+        uses: julia-actions/setup-julia@v2
         with:
           version: '1.10'
 
       - name: Install Dependencies
         run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
 
-      - name: Compile Jucite
+      - name: Compile Jucite Standalone
         run: julia --project=. build.jl
 
-      - name: Package as AppImage
+      - name: Package as Single AppImage
         run: |
           mkdir -p AppDir/usr
           cp -r JuciteApp/* AppDir/usr/
-          cp src/assets/logo.png AppDir/jucite.png
-          echo '#!/bin/sh' > AppDir/AppRun
-          echo 'cd "$(dirname "$0")/usr/bin"' >> AppDir/AppRun
-          echo 'exec ./Jucite' >> AppDir/AppRun
+          if [ -f src/assets/icon.png ]; then
+            cp src/assets/icon.png AppDir/jucite.png
+          else
+            cp src/assets/logo.png AppDir/jucite.png
+          fi
+          
+          cat << 'APPRUN' > AppDir/AppRun
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export JULIA_DEPOT_PATH="$HERE/usr/share/julia"
+          cd "$HERE/usr/bin"
+          exec "./Jucite" "$@"
+          APPRUN
           chmod +x AppDir/AppRun
-          echo '[Desktop Entry]' > AppDir/Jucite.desktop
-          echo 'Name=Jucite' >> AppDir/Jucite.desktop
-          echo 'Exec=Jucite' >> AppDir/Jucite.desktop
-          echo 'Icon=jucite' >> AppDir/Jucite.desktop
-          echo 'Type=Application' >> AppDir/Jucite.desktop
-          echo 'Categories=Utility;' >> AppDir/Jucite.desktop
-          wget "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          
+          cat << 'DESKTOP' > AppDir/Jucite.desktop
+          [Desktop Entry]
+          Name=Jucite Reference Manager
+          Exec=Jucite
+          Icon=jucite
+          Type=Application
+          Categories=Education;Science;Utility;
+          DESKTOP
+          
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
           chmod +x appimagetool-x86_64.AppImage
-          ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir Jucite-Linux-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir Jucite-Linux-x86_64.AppImage
 
-      - name: Upload Linux Release Asset
-        uses: softprops/action-gh-release@v1
+      - name: Upload Linux .AppImage
+        uses: softprops/action-gh-release@v2
         with:
           files: Jucite-Linux-x86_64.AppImage
           tag_name: "v1.0.0"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =====================================================
+  # 2. WINDOWS SINGLE FILE: Jucite-Windows-Setup.exe
+  # =====================================================
+  build-windows:
+    name: Build Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+
+      - name: Install Dependencies
+        run: julia --project=. -e "using Pkg; Pkg.instantiate()"
+
+      - name: Compile Jucite Standalone
+        run: julia --project=. build.jl
+
+      - name: Compile Single .exe Installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iss = @"
+          [Setup]
+          AppName=Jucite Reference Manager
+          AppVersion=1.0.0
+          AppPublisher=RectoPress
+          AppPublisherURL=https://rectopress.com/
+          DefaultDirName={autopf}\Jucite
+          DefaultGroupName=Jucite Reference Manager
+          OutputDir=.
+          OutputBaseFilename=Jucite-Windows-Setup
+          Compression=lzma2
+          SolidCompression=yes
+          PrivilegesRequired=lowest
+
+          [Files]
+          Source: "JuciteApp\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\Jucite Reference Manager"; Filename: "{app}\bin\Jucite.exe"
+          Name: "{autodesktop}\Jucite Reference Manager"; Filename: "{app}\bin\Jucite.exe"
+
+          [Run]
+          Filename: "{app}\bin\Jucite.exe"; Description: "Launch Jucite Reference Manager"; Flags: nowait postinstall skipifsilent
+          "@
+          $iss | Out-File -Encoding ASCII installer.iss
+          iscc installer.iss
+
+      - name: Upload Windows .exe
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Jucite-Windows-Setup.exe
+          tag_name: "v1.0.0"
+
+  # =====================================================
+  # 3. MACOS SINGLE FILE: Jucite-macOS.dmg
+  # =====================================================
+  build-macos:
+    name: Build macOS (.dmg)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Julia
+        uses: julia-actions/setup-julia@v2
+        with:
+          version: '1.10'
+
+      - name: Install Dependencies
+        run: julia --project=. -e 'using Pkg; Pkg.instantiate()'
+
+      - name: Compile Jucite Standalone
+        run: julia --project=. build.jl
+
+      - name: Package as Native macOS .dmg
+        run: |
+          mkdir -p "Jucite.app/Contents/MacOS"
+          mkdir -p "Jucite.app/Contents/Resources"
+          cp -r JuciteApp/* "Jucite.app/Contents/Resources/"
+          
+          cat << 'MACRUN' > "Jucite.app/Contents/MacOS/Jucite"
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")/../Resources/bin" && pwd)"
+          export JULIA_DEPOT_PATH="$(cd "$(dirname "$0")/../Resources/share/julia" && pwd)"
+          cd "$DIR"
+          exec "./Jucite"
+          MACRUN
+          chmod +x "Jucite.app/Contents/MacOS/Jucite"
+          
+          cat << 'PLIST' > "Jucite.app/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>Jucite</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.rectopress.jucite</string>
+              <key>CFBundleName</key>
+              <string>Jucite Reference Manager</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+          </dict>
+          </plist>
+          PLIST
+          
+          hdiutil create -volname "Jucite Reference Manager" -srcfolder "Jucite.app" -ov -format UDZO Jucite-macOS.dmg
+
+      - name: Upload macOS .dmg
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Jucite-macOS.dmg
+          tag_name: "v1.0.0"

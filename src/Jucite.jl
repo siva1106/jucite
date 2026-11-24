@@ -1155,7 +1155,6 @@ end
     return HTTP.Response(200, headers, JSON3.write(results))
 end
 
-# 2. LAUNCH LOCAL PDF
 @get "/api/open-pdf" function(req::HTTP.Request)
     params = queryparams(req)
     id_str = get(params, "id", "")
@@ -1170,7 +1169,16 @@ end
     if ismissing(pdf_path) || isempty(pdf_path) || !isfile(pdf_path) return HTTP.Response(404, "PDF does not exist") end
     
     println("📂 Desktop Action: Opening PDF file -> ", pdf_path)
-    run(`xdg-open $pdf_path`, wait=false)
+    
+    # CROSS-PLATFORM PDF OPENER (Works on Windows, macOS, and Linux!)
+    if Sys.iswindows()
+        run(`cmd /c start "" "$pdf_path"`, wait=false)
+    elseif Sys.isapple()
+        run(`open $pdf_path`, wait=false)
+    else
+        run(`xdg-open $pdf_path`, wait=false)
+    end
+    
     return HTTP.Response(200, "Opening PDF...")
 end
 
@@ -1408,51 +1416,6 @@ end
     end
 end
 # ======================================================
-# --- SERVER LAUNCHER & DESKTOP BUNDLER ---
-# ======================================================
-
-function start_server()
-    println("🚀 Starting Jucite Private Server on port 8080...")
-    init_db()
-    load_or_fetch_style_catalog()
-    
-    # We turn off Oxygen's default noisy logging and use our own print statements
-    # so LibreOffice polling doesn't flood the terminal!
-    serve(port=8080, cors=true, access_log=nothing)
-end
-
-function launch_desktop_app()
-    println("🚀 Starting Jucite Core Engine on port 8080...")
-    init_db()
-    load_or_fetch_style_catalog()
-    
-    # Start server silently in background
-    @async serve(port=8080, cors=true, access_log=nothing)
-    
-    sleep(1.0)
-    
-    println("🖥️ Launching Jucite Native Desktop Window...")
-    opts = Dict(
-        "title" => "Jucite Reference Manager",
-        "icon" => joinpath(pwd(), "src", "assets", "icon.png"), 
-        "width" => 1200,
-        "height" => 800,
-        "minWidth" => 800,
-        "minHeight" => 600,
-        "autoHideMenuBar" => true,
-        "backgroundColor" => "#f8fafc", 
-        "webPreferences" => Dict("nodeIntegration" => true)
-    )
-    
-    w = Window(opts)
-    Blink.loadurl(w, "http://127.0.0.1:8080/")
-    
-    println("✅ Jucite Desktop is running!")
-    wait() 
-end
-
-end # End of Module Jucite
-# ======================================================
 # --- COMPILER ENTRY POINT ---
 # ======================================================
 
@@ -1467,3 +1430,75 @@ Base.@ccallable function julia_main()::Cint
     end
     return 0
 end
+function launch_desktop_app()
+    println("🚀 Starting Jucite Core Engine on port 8080...")
+    init_db()
+    load_or_fetch_style_catalog()
+    
+    # Start the local server silently in the background
+    @async serve(port=8080, cors=true, access_log=nothing)
+    sleep(1.2)
+    
+    println("🖥️ Launching Jucite Reference Manager Window...")
+    icon_file = isfile(joinpath(pwd(), "src", "assets", "icon.png")) ? joinpath(pwd(), "src", "assets", "icon.png") : joinpath(pwd(), "src", "assets", "logo.png")
+    
+    opts = Dict(
+        "title" => "Jucite Reference Manager",
+        "icon" => icon_file,
+        "width" => 1200,
+        "height" => 800,
+        "minWidth" => 800,
+        "minHeight" => 600,
+        "autoHideMenuBar" => true,
+        "backgroundColor" => "#f8fafc",
+        "webPreferences" => Dict("nodeIntegration" => true)
+    )
+    
+    # Try opening the native Electron window; if the friend's OS blocks Electron sandbox, open a native app window automatically so it NEVER crashes!
+    try
+        w = Window(opts)
+        Blink.loadurl(w, "http://127.0.0.1:8080/")
+    catch e
+        println("🖥️ Opening Jucite in system desktop window...")
+        if Sys.iswindows()
+            run(`cmd /c start "" "http://127.0.0.1:8080/"`, wait=false)
+        elseif Sys.isapple()
+            run(`open "http://127.0.0.1:8080/"`, wait=false)
+        else
+            run(`xdg-open "http://127.0.0.1:8080/"`, wait=false)
+        end
+    end
+    
+    println("✅ Jucite Reference Manager is running!")
+    while true
+        sleep(3600)
+    end
+end
+
+# ======================================================
+# --- STANDALONE COMPILER ENTRY POINT (CRASH-PROOF) ---
+# ======================================================
+
+Base.@ccallable function julia_main()::Cint
+    try
+        # 1. Create a permanent writable workspace in the user's Home folder
+        # (Prevents SQLite "Read-Only File System" crashes inside Linux AppImages!)
+        user_workspace = joinpath(homedir(), "Jucite_Workspace")
+        mkpath(user_workspace)
+        
+        # 2. Locate the bundled 'src' folder (HTML + Logos) next to the compiled binary
+        bundled_src = isdir(joinpath(Sys.BINDIR, "src")) ? joinpath(Sys.BINDIR, "src") : joinpath(pwd(), "src")
+        if isdir(bundled_src)
+            cp(bundled_src, joinpath(user_workspace, "src"); force=true)
+        end
+        
+        # 3. Move into the writable workspace and launch!
+        cd(user_workspace)
+        launch_desktop_app()
+    catch e
+        println("❌ Fatal Startup Error: ", e)
+    end
+    return 0
+end
+
+end # End of module Jucite
