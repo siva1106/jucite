@@ -1,3 +1,8 @@
+name = "Jucite"
+uuid = "d4e8a1b2-9c3f-4a5e-8b7d-2f1e3c4b5a6d"
+authors = ["RectoPress"]
+version = "1.0.0"
+
 [deps]
 Blink = "ad839575-38b3-5650-b840-f874b8c74a25"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"

@@ -1,4 +1,6 @@
 using Pkg
+# Install PackageCompiler in global temp environment so it doesn't alter Project.toml
+Pkg.activate()
 Pkg.add("PackageCompiler")
 using PackageCompiler
 
