@@ -1326,9 +1326,8 @@ end
         data = json(req)
         group_name = String(data.group_name)
         email = String(data.email)
-        role = haskey(data, :role) ? String(data.role) : "writer" # "writer" (Edit) or "reader" (View)
+        role = haskey(data, :role) ? String(data.role) : "writer"
         
-        # 1. Locate (or create) the Group Folder in Google Drive
         root_id = create_drive_folder("Jucite Library", "", access_token)
         groups_id = create_drive_folder("Group Libraries", root_id, access_token)
         target_folder_id = create_drive_folder(group_name, groups_id, access_token)
@@ -1337,9 +1336,7 @@ end
             return HTTP.Response(500, headers, "{\"error\": \"Could not locate folder on Drive.\"}")
         end
         
-        # 2. Call Google Drive Permissions API to share directly with the teammate's email!
-        # Change true -> false so sharing stays 100% inside the Jucite App!
-perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissions?sendNotificationEmail=false"
+        perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissions?sendNotificationEmail=false"
         perm_headers = [
             "Authorization" => "Bearer $access_token",
             "Content-Type" => "application/json"
@@ -1352,8 +1349,9 @@ perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissi
         
         res = HTTP.post(perm_url, perm_headers, JSON3.write(perm_body); status_exception=false)
         if res.status == 200 || res.status == 201
-            println("🤝 Shared group '$group_name' with $email (Role: $role)")
-            return HTTP.Response(200, headers, "{\"status\": \"success\", \"message\": \"Shared with $email!\"}")
+            println("🤝 Shared group '$group_name' with $(email) (Role: $role)")
+            # FIXED: Wrapped $(email) in parentheses so '!' doesn't crash Julia!
+            return HTTP.Response(200, headers, JSON3.write(Dict("status" => "success", "message" => "Shared with $(email)!")))
         else
             println("❌ Google Share Error: ", String(res.body))
             return HTTP.Response(res.status, headers, "{\"error\": \"Google rejected share request. Check the email address.\"}")
@@ -1363,36 +1361,30 @@ perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissi
         return HTTP.Response(500, headers, "{\"error\": \"Share failed.\"}")
     end
 end
+
 @get "/api/groups/members" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
     params = queryparams(req)
     group_name = get(params, "group_name", "")
     
-    if isempty(group_name)
-        return HTTP.Response(400, headers, "{\"error\": \"Missing group_name\"}")
-    end
+    if isempty(group_name) return HTTP.Response(400, headers, "{\"error\": \"Missing group_name\"}") end
     
     access_token = get_valid_access_token()
-    if isempty(access_token)
-        return HTTP.Response(401, headers, "{\"error\": \"Please link Google Drive in Preferences first.\"}")
-    end
+    if isempty(access_token) return HTTP.Response(401, headers, "{\"error\": \"Please link Google Drive first.\"}") end
     
     try
-        # 1. Locate the group folder inside Jucite Library -> Group Libraries
         root_id = get_drive_id("Jucite Library", true, "", access_token)
         groups_id = !isempty(root_id) ? get_drive_id("Group Libraries", true, root_id, access_token) : ""
         target_folder_id = !isempty(groups_id) ? get_drive_id(group_name, true, groups_id, access_token) : ""
         
-        # Fallback: Search globally (catches folders shared WITH you by teammates)
         if isempty(target_folder_id)
             target_folder_id = get_drive_id(group_name, true, "", access_token)
         end
         
         if isempty(target_folder_id)
-            return HTTP.Response(200, headers, JSON3.write(Dict("count" => 0, "members" => [], "note" => "Not synced to Drive yet. Click Sync or send an invite first.")))
+            return HTTP.Response(200, headers, JSON3.write(Dict("count" => 0, "members" => [], "note" => "Click Sync or send an invite to initialize folder.")))
         end
         
-        # 2. Fetch live permissions list from Google Drive API
         perm_url = "https://www.googleapis.com/drive/v3/files/$target_folder_id/permissions?fields=permissions(id,emailAddress,displayName,role,type)"
         res = HTTP.get(perm_url, ["Authorization" => "Bearer $access_token"]; status_exception=false)
         
@@ -1401,10 +1393,10 @@ end
             members = []
             if haskey(data, :permissions)
                 for p in data.permissions
-                    email = haskey(p, :emailAddress) && p.emailAddress !== nothing ? String(p.emailAddress) : "Link Access"
-                    dname = haskey(p, :displayName) && p.displayName !== nothing ? String(p.displayName) : email
-                    role = haskey(p, :role) && p.role !== nothing ? String(p.role) : "reader"
-                    push!(members, Dict("email" => email, "name" => dname, "role" => role))
+                    em = haskey(p, :emailAddress) && p.emailAddress !== nothing ? String(p.emailAddress) : "Link Access"
+                    dn = haskey(p, :displayName) && p.displayName !== nothing ? String(p.displayName) : em
+                    rl = haskey(p, :role) && p.role !== nothing ? String(p.role) : "reader"
+                    push!(members, Dict("email" => em, "name" => dn, "role" => rl))
                 end
             end
             return HTTP.Response(200, headers, JSON3.write(Dict("count" => length(members), "members" => members)))
@@ -1412,7 +1404,6 @@ end
             return HTTP.Response(res.status, headers, "{\"error\": \"Could not fetch Drive permissions.\"}")
         end
     catch e
-        println("❌ Members Fetch Error: ", e)
         return HTTP.Response(500, headers, "{\"error\": \"Failed to fetch members.\"}")
     end
 end
