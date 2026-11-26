@@ -1,11 +1,10 @@
 name = "Jucite"
 uuid = "d4e8a1b2-9c3f-4a5e-8b7d-2f1e3c4b5a6d"
-version = "1.0.0"
+version = "1.0.2"
 authors = ["RectoPress"]
 
 [deps]
 Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
-Blink = "ad839575-38b3-5650-b840-f874b8c74a25"
 DBInterface = "a10d1c49-ce27-4219-8d33-6db1a4562965"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
@@ -26,16 +25,15 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
 Base64 = "1.11.0"
-Blink = "0.12.9"
 DBInterface = "2.8.0"
 DataFrames = "1.8.3"
 Dates = "1.11.0"
 Downloads = "1.7.0"
-HTTP = "1.11.1"
+HTTP = "2.16.0"
 InteractiveUtils = "1.11.0"
 JSON3 = "1.14.4"
 Logging = "1.11.0"
-Oxygen = "1.7.5"
+Oxygen = "1.11.0"
 Printf = "1.11.0"
 Random = "1.11.0"
 SHA = "0.7.0"

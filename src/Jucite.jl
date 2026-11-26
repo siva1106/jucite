@@ -32,7 +32,6 @@ using JSON3
 
 using Oxygen
 
-using Blink
 
 # NEW: Clears old routes from memory so you never see the overwrite warnings!
 Oxygen.resetstate()
@@ -1366,44 +1365,43 @@ end
     end
 end
 
+
+function open_native_window(url::String; width::Int=1200, height::Int=800)
+    if Sys.iswindows()
+        try
+            run(`cmd /c start "" msedge --app=$url --window-size=$width,$height`, wait=false)
+            return
+        catch
+        end
+        run(`cmd /c start "" "$url"`, wait=false)
+    elseif Sys.isapple()
+        chrome_mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if isfile(chrome_mac)
+            run(`$chrome_mac --app=$url --window-size=$width,$height`, wait=false)
+        else
+            run(`open $url`, wait=false)
+        end
+    else
+        for browser in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"]
+            if Sys.which(browser) !== nothing
+                run(`$browser --app=$url --window-size=$width,$height`, wait=false)
+                return
+            end
+        end
+        run(`xdg-open $url`, wait=false)
+    end
+end
+
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()
     load_or_fetch_style_catalog()
     
-    # Start the local server silently in the background
     @async serve(port=8080, cors=true, access_log=nothing)
     sleep(1.2)
     
-    println("🖥️ Launching Jucite Reference Manager Window...")
-    icon_file = isfile(joinpath(pwd(), "src", "assets", "icon.png")) ? joinpath(pwd(), "src", "assets", "icon.png") : joinpath(pwd(), "src", "assets", "logo.png")
-    
-    opts = Dict(
-        "title" => "Jucite Reference Manager",
-        "icon" => icon_file,
-        "width" => 1200,
-        "height" => 800,
-        "minWidth" => 800,
-        "minHeight" => 600,
-        "autoHideMenuBar" => true,
-        "backgroundColor" => "#f8fafc",
-        "webPreferences" => Dict("nodeIntegration" => true)
-    )
-    
-    # Try opening the native Electron window; if the friend's OS blocks Electron sandbox, open a native app window automatically so it NEVER crashes!
-    try
-        w = Window(opts)
-        Blink.loadurl(w, "http://127.0.0.1:8080/")
-    catch e
-        println("🖥️ Opening Jucite in system desktop window...")
-        if Sys.iswindows()
-            run(`cmd /c start "" "http://127.0.0.1:8080/"`, wait=false)
-        elseif Sys.isapple()
-            run(`open "http://127.0.0.1:8080/"`, wait=false)
-        else
-            run(`xdg-open "http://127.0.0.1:8080/"`, wait=false)
-        end
-    end
+    println("🖥️ Launching Jucite Reference Manager Standalone Window...")
+    open_native_window("http://127.0.0.1:8080/"; width=1200, height=800)
     
     println("✅ Jucite Reference Manager is running!")
     while true
@@ -1411,9 +1409,6 @@ function launch_desktop_app()
     end
 end
 
-# ======================================================
-# --- STANDALONE COMPILER ENTRY POINT (CRASH-PROOF) ---
-# ======================================================
 
 Base.@ccallable function julia_main()::Cint
     try

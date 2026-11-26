@@ -1,4 +1,4 @@
-name: Build and Release Jucite (AppImage, EXE, DMG)
+ name: Build and Release Jucite (AppImage, EXE, DMG)
 
 on:
   push:
@@ -10,6 +10,7 @@ permissions:
   contents: write
 
 jobs:
+  # 1. LINUX SINGLE FILE: Jucite-Linux-x86_64.AppImage
   build-linux:
     name: Build Linux (.AppImage)
     runs-on: ubuntu-22.04
@@ -62,12 +63,13 @@ jobs:
           chmod +x appimagetool-x86_64.AppImage
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir Jucite-Linux-x86_64.AppImage
 
-      - name: Upload Linux .AppImage
-        uses: softprops/action-gh-release@v2
+      - name: Save Linux Installer Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: Jucite-Linux-x86_64.AppImage
-          tag_name: "v1.0.0"
+          name: Jucite-Linux-AppImage
+          path: Jucite-Linux-x86_64.AppImage
 
+  # 2. WINDOWS SINGLE FILE: Jucite-Windows-Setup.exe
   build-windows:
     name: Build Windows (.exe)
     runs-on: windows-latest
@@ -89,7 +91,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=Jucite Reference Manager
-          AppVersion=1.0.0
+          AppVersion=1.0.1
           AppPublisher=RectoPress
           AppPublisherURL=https://rectopress.com/
           DefaultDirName={autopf}\Jucite
@@ -113,12 +115,13 @@ jobs:
           $iss | Out-File -Encoding ASCII installer.iss
           iscc installer.iss
 
-      - name: Upload Windows .exe
-        uses: softprops/action-gh-release@v2
+      - name: Save Windows Installer Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: Jucite-Windows-Setup.exe
-          tag_name: "v1.0.0"
+          name: Jucite-Windows-EXE
+          path: Jucite-Windows-Setup.exe
 
+  # 3. MACOS SINGLE FILE: Jucite-macOS.dmg
   build-macos:
     name: Build macOS (.dmg)
     runs-on: macos-latest
@@ -161,7 +164,7 @@ jobs:
               <key>CFBundleName</key>
               <string>Jucite Reference Manager</string>
               <key>CFBundleVersion</key>
-              <string>1.0.0</string>
+              <string>1.0.1</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
           </dict>
@@ -170,8 +173,39 @@ jobs:
           
           hdiutil create -volname "Jucite Reference Manager" -srcfolder "Jucite.app" -ov -format UDZO Jucite-macOS.dmg
 
-      - name: Upload macOS .dmg
+      - name: Save macOS Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jucite-macOS-DMG
+          path: Jucite-macOS.dmg
+
+  # 4. PUBLISH ALL 3 INSTALLERS TOGETHER IN ONE ATOMIC RELEASE
+  publish-release:
+    name: Publish All 3 Installers to Release
+    needs: [build-linux, build-windows, build-macos]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download All 3 Compiled Installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release_files
+          merge-multiple: true
+
+      - name: Publish Single Release with All 3 OS Installers
         uses: softprops/action-gh-release@v2
         with:
-          files: Jucite-macOS.dmg
-          tag_name: "v1.0.0"
+          tag_name: "v1.0.1"
+          name: "Jucite Reference Manager v1.0.1 (Linux, Windows, macOS)"
+          files: |
+            release_files/Jucite-Linux-x86_64.AppImage
+            release_files/Jucite-Windows-Setup.exe
+            release_files/Jucite-macOS.dmg
+EOF
+
+# Push and tag v1.0.1 so all 3 files publish together!
+git add .github/workflows/release.yml
+git commit -m "Release: Publish Linux AppImage, Windows EXE, and macOS DMG together in one atomic release"
+git push origin master
+
+git tag -f v1.0.1
+git push -f origin v1.0.1
