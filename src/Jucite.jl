@@ -1366,22 +1366,6 @@ end
     end
 end
 
-# ======================================================
-# --- COMPILER ENTRY POINT ---
-# ======================================================
-
-Base.@ccallable function julia_main()::Cint
-    try
-        # When compiled, the executable runs in a 'bin' folder.
-        # We ensure the working directory is set correctly so it can find src/html/dashboard.html
-        cd(joinpath(@__DIR__, "..", "..")) 
-        launch_desktop_app()
-    catch e
-        println("Fatal Error: ", e)
-    end
-    return 0
-end
-
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()
@@ -1451,5 +1435,6 @@ Base.@ccallable function julia_main()::Cint
         println("❌ Fatal Startup Error: ", e)
     end
     return 0
+end
 
 end # End of module Jucite
