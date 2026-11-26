@@ -1,10 +1,23 @@
 using Pkg
 
-println("🧹 Resolving fresh dependencies for this OS & Julia version...")
+println("🧹 Building clean, registry-verified Project.toml & Manifest.toml...")
 rm("Manifest.toml"; force=true)
-Pkg.activate(".")
 
-# Auto-scan src/Jucite.jl for any additional 'using' or 'import' statements
+# Reset Project.toml to clean header only
+write("Project.toml", """
+name = "Jucite"
+uuid = "d4e8a1b2-9c3f-4a5e-8b7d-2f1e3c4b5a6d"
+authors = ["RectoPress"]
+version = "1.0.0"
+""")
+
+pkgs = Set{String}([
+    "SQLite", "DataFrames", "HTTP", "JSON3", "Oxygen", "Blink", "DBInterface",
+    "Logging", "Dates", "Random", "Sockets", "UUIDs", "Base64", "SHA", "Printf",
+    "Downloads", "TOML", "Serialization", "InteractiveUtils"
+])
+
+# Scan src/Jucite.jl for any other 'using' or 'import' packages
 code = read("src/Jucite.jl", String)
 for line in split(code, '\n')
     m = match(r"^\s*(?:using|import)\s+([A-Za-z0-9_,\s]+)", line)
@@ -13,12 +26,15 @@ for line in split(code, '\n')
             pkg = strip(split(strip(p), ':')[1])
             pkg = strip(split(pkg, '.')[1])
             if !isempty(pkg) && !(pkg in ["Base", "Core", "Main", "Jucite"])
-                try Pkg.add(String(pkg)) catch end
+                push!(pkgs, String(pkg))
             end
         end
     end
 end
 
+# Let Julia's official Package Manager add all packages with their exact Registry UUIDs!
+Pkg.activate(".")
+Pkg.add(collect(pkgs))
 Pkg.resolve()
 Pkg.instantiate()
 Pkg.precompile()
