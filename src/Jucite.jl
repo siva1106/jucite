@@ -1,35 +1,48 @@
 module Jucite
+
 using Logging
 
 # SILENCE ROUTE REPLACEMENT WARNINGS PERMANENTLY
 struct RouteWarningFilter <: Logging.AbstractLogger
     logger::Logging.AbstractLogger
 end
+
 Logging.min_enabled_level(l::RouteWarningFilter) = Logging.min_enabled_level(l.logger)
+
 Logging.shouldlog(l::RouteWarningFilter, level, frommodule, group, id) = Logging.shouldlog(l.logger, level, frommodule, group, id)
+
 function Logging.handle_message(l::RouteWarningFilter, level, msg, _module, group, id, file, line; kwargs...)
     if level == Logging.Warn && contains(string(msg), "replacing existing registered route")
         return # Silently drop this specific warning!
     end
     Logging.handle_message(l.logger, level, msg, _module, group, id, file, line; kwargs...)
 end
+
 if !(Logging.current_logger() isa RouteWarningFilter)
     Logging.global_logger(RouteWarningFilter(Logging.current_logger()))
 end
 
 using SQLite
+
 using DataFrames
+
 using HTTP
+
 using JSON3
+
 using Oxygen
+
 using Blink
 
 # NEW: Clears old routes from memory so you never see the overwrite warnings!
 Oxygen.resetstate()
 
 const DB_PATH = "jucite_library.sqlite"
+
 const PDF_DIR = "pdfs"
+
 const STYLES_CATALOG_FILE = "styles_catalog.json"
+
 # ======================================================
 # --- LOCK-FREE DATABASE ENGINE (WAL MODE) ---
 # ======================================================
@@ -60,86 +73,6 @@ function init_db()
     return db
 end
 
-# ... (keep your fetch_metadata and download_pdf functions exactly as they are) ...
-
-# UPDATE: Save paper now accepts a collection_id
-function save_paper(paper_info, collection_id::Int=0)
-    if paper_info === nothing return end
-    pdf_local_path = download_pdf(paper_info.pdf_url, paper_info.title)
-    
-    db = get_db()
-    SQLite.transaction(db) do
-        stmt_paper = SQLite.Stmt(db, "INSERT OR IGNORE INTO papers (title, doi, year, journal, pdf_path) VALUES (?, ?, ?, ?, ?)")
-        SQLite.execute(stmt_paper, (paper_info.title, paper_info.doi, paper_info.year, paper_info.journal, pdf_local_path))
-        
-        cursor_paper = DBInterface.execute(db, "SELECT id FROM papers WHERE doi = ?", (paper_info.doi,))
-        paper_id = first(cursor_paper).id
-        
-        for author_name in paper_info.authors
-            stmt_author = SQLite.Stmt(db, "INSERT OR IGNORE INTO authors (name) VALUES (?)")
-            SQLite.execute(stmt_author, (author_name,))
-            cursor_auth = DBInterface.execute(db, "SELECT id FROM authors WHERE name = ?", (author_name,))
-            author_id = first(cursor_auth).id
-            stmt_link = SQLite.Stmt(db, "INSERT OR IGNORE INTO paper_authors (paper_id, author_id) VALUES (?, ?)")
-            SQLite.execute(stmt_link, (paper_id, author_id))
-        end
-        
-        # NEW: If a group is selected, link the paper to that group!
-        if collection_id > 0
-            stmt_cp = SQLite.Stmt(db, "INSERT OR IGNORE INTO collection_papers (collection_id, paper_id) VALUES (?, ?)")
-            SQLite.execute(stmt_cp, (collection_id, paper_id))
-        end
-    end
-    println("💾 Saved paper to SQLite. (Collection ID: $collection_id)")
-end
-
-# ... (keep your CSL functions exactly as they are) ...
-
-# UPDATE: API Library now filters by Collection!
-@get "/api/library" function(req::HTTP.Request)
-    params = queryparams(req)
-    col_id = parse(Int, get(params, "collection_id", "0"))
-    is_trash = parse(Int, get(params, "trash", "0"))
-    
-    db = SQLite.DB(DB_PATH)
-    try SQLite.execute(db, "ALTER TABLE papers ADD COLUMN trashed INTEGER DEFAULT 0") catch end
-    
-    if is_trash == 1
-        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed = 1") |> DataFrame
-    elseif col_id > 0
-        df = DBInterface.execute(db, "SELECT p.id, p.title, p.year, p.journal, p.pdf_path, p.doi FROM papers p JOIN collection_papers cp ON p.id = cp.paper_id WHERE cp.collection_id = ? AND (p.trashed IS NULL OR p.trashed = 0)", (col_id,)) |> DataFrame
-    else
-        df = DBInterface.execute(db, "SELECT id, title, year, journal, pdf_path, doi FROM papers WHERE trashed IS NULL OR trashed = 0") |> DataFrame
-    end
-    
-    papers_list = []
-    for row in eachrow(df)
-        authors = get_paper_authors(db, row.id)
-        csl_authors = [length(split(a, ", ")) == 2 ? Dict("family" => split(a, ", ")[1], "given" => split(a, ", ")[2]) : Dict("family" => a) for a in authors]
-        push!(papers_list, Dict("id" => row.id, "title" => row.title, "year" => row.year, "journal" => row.journal, "pdf_path" => row.pdf_path, "authors" => csl_authors, "doi" => ismissing(row.doi) ? "" : row.doi))
-    end
-    return papers_list
-end
-# UPDATE: API Save now accepts the Collection ID!
-@post "/api/save" function(req::HTTP.Request)
-    headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
-    try
-        data = json(req)
-        doi_val = haskey(data, :doi) ? String(data.doi) : ""
-        col_id = haskey(data, :collection_id) ? Int(data.collection_id) : 0
-        
-        if !isempty(doi_val)
-            paper = fetch_metadata(doi_val)
-            if paper !== nothing
-                save_paper(paper, col_id)
-                return HTTP.Response(200, headers, "{\"status\": \"saved\"}")
-            end
-        end
-        return HTTP.Response(400, headers, "{\"error\": \"Nothing to save\"}")
-    catch e
-        return HTTP.Response(500, headers, "{\"error\": \"Failed to save\"}")
-    end
-end
 # ======================================================
 # --- GOOGLE DRIVE CLOUD SYNC ENGINE ---
 # ======================================================
@@ -213,6 +146,7 @@ function sync_to_google_drive(access_token::String="")
         "backup_path" => drive_root
     )
 end
+
 # ======================================================
 # --- GOOGLE DRIVE CLOUD SYNC API ---
 # ======================================================
@@ -224,6 +158,7 @@ end
         "Access-Control-Allow-Headers" => "*"
     ], "")
 end
+
 # ======================================================
 # --- COLLABORATIVE GOOGLE DRIVE CLOUD UPLOADER ---
 # ======================================================
@@ -269,6 +204,7 @@ function get_drive_id(name::String, is_folder::Bool, parent_id::String, token::S
     catch e end
     return ""
 end
+
 # NEW: Reads the raw contents of a file directly from Google Drive API
 function read_drive_file(file_id::String, token::String)
     url = "https://www.googleapis.com/drive/v3/files/$file_id?alt=media"
@@ -282,6 +218,7 @@ function read_drive_file(file_id::String, token::String)
     end
     return ""
 end
+
 function create_drive_folder(folder_name::String, parent_id, token)
     parent_str = safe_str(parent_id); tok_str = safe_str(token)
     existing_id = get_drive_id(folder_name, true, parent_str, tok_str)
@@ -349,6 +286,7 @@ function upload_file_to_drive(file_path::String, file_name::String, parent_id, m
         println("❌ Exception uploading content: ", e)
     end
 end
+
 """
     delete_orphaned_drive_files(folder_id::String, active_filenames::Vector{String}, token::String)
 Scans a Google Drive folder and deletes any files that are not in the active_filenames list.
@@ -377,6 +315,7 @@ function delete_orphaned_drive_files(folder_id::String, active_filenames::Vector
         println("⚠️ Failed to delete orphaned files: ", e)
     end
 end
+
 # --- MAIN COLLABORATIVE SYNC ENDPOINT ---
 @get "/api/sync/drive" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -591,6 +530,7 @@ end
 # ======================================================
 
 const TOKEN_FILE = "google_tokens.json"
+
 # ======================================================
 # --- LOAD CREDENTIALS SAFELY FROM SECRETS.JSON ---
 # ======================================================
@@ -611,6 +551,7 @@ function get_oauth_credentials()
 end
 
 const (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET) = get_oauth_credentials()
+
 # 1. NEW BACKGROUND REFRESHER ENGINE
 function get_valid_access_token()
     if !isfile(TOKEN_FILE) return "" end
@@ -737,6 +678,7 @@ end
     println("🔓 Google Drive Account Unlinked.")
     return HTTP.Response(200, headers, "{\"status\": \"unlinked\"}")
 end
+
 # ======================================================
 # --- METADATA & PDF INGESTION ENGINE ---
 # ======================================================
@@ -919,6 +861,7 @@ function fetch_csl_style(style_name::String)
     catch e end
     return ""
 end
+
 # ======================================================
 # --- TRASH & MOVE PAPER ENGINE ---
 # ======================================================
@@ -957,6 +900,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to trash\"}")
     end
 end
+
 # 2. RESTORE PAPER FROM TRASH
 @route ["OPTIONS"] "/api/restore" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
@@ -1014,6 +958,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to delete\"}")
     end
 end
+
 @route ["OPTIONS"] "/api/move" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
 end
@@ -1039,6 +984,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to move\"}")
     end
 end
+
 # 4. EMPTY ENTIRE TRASH
 @route ["OPTIONS"] "/api/trash/empty" function(req::HTTP.Request)
     return HTTP.Response(200, ["Access-Control-Allow-Origin" => "*", "Access-Control-Allow-Methods" => "POST, OPTIONS", "Access-Control-Allow-Headers" => "*"], "")
@@ -1074,6 +1020,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to empty trash\"}")
     end
 end
+
 # ======================================================
 # --- SERVER ENDPOINTS & API SUITE ---
 # ======================================================
@@ -1081,9 +1028,9 @@ end
 @get "/" function()
     return file("src/html/dashboard.html")
 end
-# NEW: Serve the official Jucite logo
+
 @get "/assets/logo.png" function() return file("src/assets/logo.png") end
-@get "/assets/logo.png" function() return file("src/assets/logo.png") end
+
 @get "/assets/icon.png" function() return file("src/assets/icon.png") end
 
 # 1. LIBRARY ENDPOINT (WITH TRASH & GROUP FILTERING)
@@ -1111,6 +1058,7 @@ end
     end
     return papers_list
 end
+
 # ======================================================
 # --- 10,000+ CSL STYLE SEARCH ENGINE ---
 # ======================================================
@@ -1213,6 +1161,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to save collection\"}")
     end
 end
+
 # 6. UNIVERSAL SAVE ENDPOINT
 @post "/api/save" function(req::HTTP.Request)
     headers = ["Access-Control-Allow-Origin" => "*", "Content-Type" => "application/json"]
@@ -1315,6 +1264,7 @@ end
     
     return HTTP.Response(200, headers, JSON3.write(Dict("in_text" => in_text, "bibliography" => bibliography, "style" => style, "paper_id" => id)))
 end
+
 # ======================================================
 # --- IN-APP TEAMMATE SHARING (GOOGLE DRIVE PERMISSIONS API) ---
 # ======================================================
@@ -1415,6 +1365,7 @@ end
         return HTTP.Response(500, headers, "{\"error\": \"Failed to fetch members.\"}")
     end
 end
+
 # ======================================================
 # --- COMPILER ENTRY POINT ---
 # ======================================================
@@ -1430,6 +1381,7 @@ Base.@ccallable function julia_main()::Cint
     end
     return 0
 end
+
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()
@@ -1499,6 +1451,5 @@ Base.@ccallable function julia_main()::Cint
         println("❌ Fatal Startup Error: ", e)
     end
     return 0
-end
 
 end # End of module Jucite
