@@ -1392,6 +1392,33 @@ function open_native_window(url::String; width::Int=1200, height::Int=800)
     end
 end
 
+
+function open_native_window(url::String; width::Int=1200, height::Int=800)
+    if Sys.iswindows()
+        try
+            run(`cmd /c start "" msedge --app=$url --window-size=$width,$height`, wait=false)
+            return
+        catch
+        end
+        run(`cmd /c start "" "$url"`, wait=false)
+    elseif Sys.isapple()
+        chrome_mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if isfile(chrome_mac)
+            run(`$chrome_mac --app=$url --window-size=$width,$height`, wait=false)
+        else
+            run(`open $url`, wait=false)
+        end
+    else
+        for browser in ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "brave-browser", "microsoft-edge"]
+            if Sys.which(browser) !== nothing
+                run(`$browser --app=$url --window-size=$width,$height`, wait=false)
+                return
+            end
+        end
+        run(`xdg-open $url`, wait=false)
+    end
+end
+
 function launch_desktop_app()
     println("🚀 Starting Jucite Core Engine on port 8080...")
     init_db()

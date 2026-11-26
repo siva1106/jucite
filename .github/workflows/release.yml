@@ -1,4 +1,4 @@
- name: Build and Release Jucite (AppImage, EXE, DMG)
+name: Build and Release Jucite (AppImage, EXE, DMG)
 
 on:
   push:
@@ -91,7 +91,7 @@ jobs:
           $iss = @"
           [Setup]
           AppName=Jucite Reference Manager
-          AppVersion=1.0.1
+          AppVersion=1.0.2
           AppPublisher=RectoPress
           AppPublisherURL=https://rectopress.com/
           DefaultDirName={autopf}\Jucite
@@ -164,7 +164,7 @@ jobs:
               <key>CFBundleName</key>
               <string>Jucite Reference Manager</string>
               <key>CFBundleVersion</key>
-              <string>1.0.1</string>
+              <string>1.0.2</string>
               <key>CFBundlePackageType</key>
               <string>APPL</string>
           </dict>
@@ -194,18 +194,9 @@ jobs:
       - name: Publish Single Release with All 3 OS Installers
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v1.0.1"
-          name: "Jucite Reference Manager v1.0.1 (Linux, Windows, macOS)"
+          tag_name: "v1.0.2"
+          name: "Jucite Reference Manager v1.0.2 (Linux, Windows, macOS)"
           files: |
             release_files/Jucite-Linux-x86_64.AppImage
             release_files/Jucite-Windows-Setup.exe
             release_files/Jucite-macOS.dmg
-EOF
-
-# Push and tag v1.0.1 so all 3 files publish together!
-git add .github/workflows/release.yml
-git commit -m "Release: Publish Linux AppImage, Windows EXE, and macOS DMG together in one atomic release"
-git push origin master
-
-git tag -f v1.0.1
-git push -f origin v1.0.1
